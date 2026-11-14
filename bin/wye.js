@@ -6,7 +6,7 @@ import { connectGuest } from '../lib/join.js'
 
 const USAGE = `Usage:
   wye relay  [--port 8787] [--bind 0.0.0.0]
-  wye host   [--relay ws://127.0.0.1:8787] [--room <token>] [--name <user>]
+  wye host   [--relay ws://127.0.0.1:8787] [--harness antigravity|claude] [--session <id>] [--room <token>] [--name <user>]
   wye join   <url-or-room> [--relay ws://127.0.0.1:8787] [--name <user>]
   wye status
   wye stop   [<room-or-conversation-id>]`
@@ -17,6 +17,8 @@ const { values, positionals } = parseArgs({
 		port: { type: 'string', short: 'p' },
 		bind: { type: 'string', short: 'b' },
 		relay: { type: 'string', short: 'r' },
+		harness: { type: 'string' },
+		session: { type: 'string', short: 's' },
 		room: { type: 'string' },
 		name: { type: 'string', short: 'n' },
 		help: { type: 'boolean', short: 'h' }
@@ -47,6 +49,8 @@ if (cmd === 'relay') {
 } else if (cmd === 'host') {
 	const session = await connectHost({
 		relayUrl: values.relay,
+		harness: values.harness,
+		sessionId: values.session,
 		room: values.room,
 		name: values.name,
 		onEvent (ev) {
@@ -97,7 +101,7 @@ if (cmd === 'relay') {
 		console.log('No active wye host sessions.')
 	} else {
 		for (const h of active) {
-			console.log(`${h.room}\tpid=${h.pid}\t${h.relayUrl}\t${h.workspace}`)
+			console.log(`${h.room}\t${h.harness || 'unknown'}\tpid=${h.pid}\t${h.relayUrl}\t${h.workspace}`)
 		}
 	}
 } else if (cmd === 'stop') {

@@ -1,17 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import { PassThrough } from 'node:stream'
-import { parseStep } from '../lib/transcript.js'
+import { parseAntigravityStep } from '../lib/harnesses/antigravity.js'
+import { createClaudeStepParser, slugifyClaudeProject } from '../lib/harnesses/claude.js'
 import { createRelay } from '../lib/relay.js'
 import { connectHost, listHosts } from '../lib/host.js'
 import { connectGuest } from '../lib/join.js'
 
-test('parseStep normalizes user, assistant, and error steps', () => {
-	const userStep = parseStep(JSON.stringify({
+test('parseAntigravityStep normalizes user, assistant, and error steps', () => {
+	const userStep = parseAntigravityStep(JSON.stringify({
 		step_index: 0,
 		source: 'USER_EXPLICIT',
 		type: 'USER_INPUT',
@@ -21,7 +24,7 @@ test('parseStep normalizes user, assistant, and error steps', () => {
 	}))
 	assert.equal(userStep.role, 'user')
 	assert.equal(userStep.text, 'initial desktop question')
-	const modelStep = parseStep(JSON.stringify({
+	const modelStep = parseAntigravityStep(JSON.stringify({
 		step_index: 3,
 		source: 'MODEL',
 		type: 'PLANNER_RESPONSE',
@@ -35,7 +38,61 @@ test('parseStep normalizes user, assistant, and error steps', () => {
 	assert.deepEqual(modelStep.tools, [{ label: 'Read', detail: '/tmp/demo.js' }])
 })
 
-test('end-to-end host + relay + guest syncs history, prompts, cancel, state, and reconnect', async () => {
+test('createClaudeStepParser coalesces assistant blocks, filters tool results, and unwraps peer prompts', () => {
+	const parse = createClaudeStepParser()
+	assert.equal(parse(JSON.stringify({ type: 'mode', mode: 'normal' })), null)
+	const u1 = parse(JSON.stringify({
+		type: 'user',
+		uuid: 'u-1',
+		timestamp: '2026-11-14T20:00:00Z',
+		message: { role: 'user', content: 'Explain this repo' }
+	}))
+	assert.equal(u1.index, 0)
+	assert.equal(u1.role, 'user')
+	assert.equal(u1.text, 'Explain this repo')
+	assert.equal(parse(JSON.stringify({
+		type: 'assistant',
+		uuid: 'a-think',
+		message: { id: 'msg-1', role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }] }
+	})), null)
+	const a1 = parse(JSON.stringify({
+		type: 'assistant',
+		uuid: 'a-text',
+		message: { id: 'msg-1', role: 'assistant', content: [{ type: 'text', text: 'Checking files.' }] }
+	}))
+	assert.equal(a1.index, 1)
+	assert.equal(a1.text, 'Checking files.')
+	assert.deepEqual(a1.tools, [])
+	const a2 = parse(JSON.stringify({
+		type: 'assistant',
+		uuid: 'a-tool',
+		message: { id: 'msg-1', role: 'assistant', content: [{ type: 'tool_use', id: 't-1', name: 'Read', input: { file_path: '/src/index.js' } }] }
+	}))
+	assert.equal(a2.index, 1)
+	assert.equal(a2.text, 'Checking files.')
+	assert.deepEqual(a2.tools, [{ label: 'Read', detail: '/src/index.js' }])
+	assert.equal(parse(JSON.stringify({
+		type: 'user',
+		uuid: 'u-toolres',
+		toolUseResult: true,
+		message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't-1', content: 'ok' }] }
+	})), null)
+	const peerPrompt = parse(JSON.stringify({
+		type: 'user',
+		uuid: 'u-peer',
+		isMeta: true,
+		origin: { kind: 'peer' },
+		message: {
+			role: 'user',
+			content: 'Another Claude session sent a message:\nCan we check tests next?\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.'
+		}
+	}))
+	assert.equal(peerPrompt.index, 2)
+	assert.equal(peerPrompt.role, 'user')
+	assert.equal(peerPrompt.text, 'Can we check tests next?')
+})
+
+test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel, state, and reconnect', async () => {
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wye-test-'))
 	const stateDir = path.join(tmpDir, 'state')
 	const convId = '11111111-2222-3333-4444-555555555555'
@@ -124,6 +181,7 @@ test('end-to-end host + relay + guest syncs history, prompts, cancel, state, and
 			if (ev.type === 'reconnected') resolveReconnected()
 		}
 	})
+	assert.equal(hostSession.harness, 'antigravity')
 	assert.equal(hostSession.room, convId)
 	assert.equal(listHosts(stateDir).length, 1)
 	const htmlRes = await fetch(`http://127.0.0.1:${relayPort}/${convId}`)
@@ -184,4 +242,128 @@ test('end-to-end host + relay + guest syncs history, prompts, cancel, state, and
 	await relay.close()
 	await new Promise(resolve => mockLs.close(resolve))
 	fs.rmSync(tmpDir, { recursive: true, force: true })
+})
+
+test('end-to-end Claude Code host discovers session, streams JSONL, and injects UDS frames', async () => {
+	const shortTmp = fs.mkdtempSync('/tmp/wye-cc-')
+	const configDir = path.join(shortTmp, 'claude')
+	const sessionsDir = path.join(configDir, 'sessions')
+	const workspace = path.join(shortTmp, 'proj')
+	const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+	const sockPath = path.join(shortTmp, 'cc.sock')
+	const projectDir = path.join(configDir, 'projects', slugifyClaudeProject(workspace))
+	fs.mkdirSync(sessionsDir, { recursive: true })
+	fs.mkdirSync(projectDir, { recursive: true })
+	fs.mkdirSync(workspace, { recursive: true })
+	const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`)
+	fs.writeFileSync(transcriptPath, [
+		JSON.stringify({
+			type: 'user',
+			uuid: 'u-init',
+			timestamp: '2026-11-14T20:00:00Z',
+			message: { role: 'user', content: 'Starting in Claude Desktop' }
+		}),
+		JSON.stringify({
+			type: 'assistant',
+			uuid: 'a-init',
+			timestamp: '2026-11-14T20:00:01Z',
+			message: { id: 'm-1', role: 'assistant', content: [{ type: 'text', text: 'Ready in Claude!' }] }
+		})
+	].join('\n') + '\n')
+	const receivedFrames = []
+	let resolvePromptFrame
+	const promptFrameDone = new Promise(resolve => { resolvePromptFrame = resolve })
+	let resolveCancelFrame
+	const cancelFrameDone = new Promise(resolve => { resolveCancelFrame = resolve })
+	const udsServer = net.createServer(conn => {
+		let buf = ''
+		conn.on('data', chunk => { buf += chunk.toString('utf8') })
+		conn.on('end', () => {
+			const lines = buf.trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
+			receivedFrames.push(lines)
+			const userFrame = lines.find(l => l.type === 'user')
+			if (userFrame && userFrame.priority === 'now') {
+				resolveCancelFrame()
+			} else if (userFrame) {
+				fs.appendFileSync(transcriptPath, [
+					JSON.stringify({
+						type: 'user',
+						uuid: 'u-guest',
+						isMeta: true,
+						origin: { kind: 'peer' },
+						message: {
+							role: 'user',
+							content: `Another Claude session sent a message:\n${userFrame.message.content}\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.`
+						}
+					}),
+					JSON.stringify({
+						type: 'assistant',
+						uuid: 'a-guest',
+						message: { id: 'm-2', role: 'assistant', content: [{ type: 'text', text: 'Got guest message in Claude!' }] }
+					})
+				].join('\n') + '\n')
+				resolvePromptFrame()
+			}
+		})
+	})
+	await new Promise(resolve => udsServer.listen(sockPath, resolve))
+	const canonicalSock = fs.realpathSync(sockPath)
+	const sockHash = crypto.createHash('sha256').update(canonicalSock).digest('hex')
+	fs.writeFileSync(path.join(sessionsDir, `${process.pid}.json`), JSON.stringify({
+		pid: process.pid,
+		sessionId,
+		cwd: workspace,
+		messagingSocketPath: canonicalSock,
+		updatedAt: Date.now()
+	}))
+	fs.writeFileSync(path.join(sessionsDir, `${process.pid}.${sockHash}.key`), JSON.stringify({
+		peerToken: 'claude-secret-peer-token'
+	}))
+	const relay = createRelay()
+	const relayAddr = await relay.open(0, '127.0.0.1')
+	const relayUrl = `ws://127.0.0.1:${relayAddr.port}`
+	const hostSession = await connectHost({
+		env: {},
+		harness: 'claude',
+		claudeConfigDir: configDir,
+		workspace,
+		relayUrl,
+		name: 'wife',
+		trackState: false
+	})
+	assert.equal(hostSession.harness, 'claude')
+	assert.equal(hostSession.room, sessionId)
+	const seenSteps = []
+	let resolveReplyStep
+	const replyStepDone = new Promise(resolve => { resolveReplyStep = resolve })
+	const guestSession = await connectGuest({
+		env: {},
+		target: `${relayUrl}/${sessionId}`,
+		name: 'jesse',
+		interactive: false,
+		output: new PassThrough(),
+		onStep (step) {
+			seenSteps.push(step)
+			if (step.index === 3) resolveReplyStep()
+		}
+	})
+	await new Promise(resolve => setTimeout(resolve, 60))
+	assert.equal(seenSteps.length, 2)
+	assert.equal(seenSteps[0].text, 'Starting in Claude Desktop')
+	guestSession.sendPrompt('hi from jesse!')
+	await promptFrameDone
+	await replyStepDone
+	assert.equal(seenSteps[2].role, 'user')
+	assert.equal(seenSteps[2].text, 'hi from jesse!')
+	assert.equal(seenSteps[3].text, 'Got guest message in Claude!')
+	guestSession.sendCancel()
+	await cancelFrameDone
+	assert.deepEqual(receivedFrames[0][0], { type: 'auth', token: 'claude-secret-peer-token' })
+	assert.equal(receivedFrames[0][1].message.content, 'hi from jesse!')
+	assert.equal(receivedFrames[1][1].priority, 'now')
+	guestSession.disconnect()
+	hostSession.disconnect()
+	await relay.close()
+	await new Promise(resolve => udsServer.close(resolve))
+	fs.rmSync(shortTmp, { recursive: true, force: true })
 })
