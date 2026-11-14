@@ -6,8 +6,8 @@ import { connectGuest } from '../lib/join.js'
 
 const USAGE = `Usage:
   wye relay  [--port 8787] [--bind 0.0.0.0]
-  wye host   [--relay ws://127.0.0.1:8787] [--harness antigravity|claude] [--session <id>] [--room <token>] [--name <user>]
-  wye join   <url-or-room> [--relay ws://127.0.0.1:8787] [--name <user>]
+  wye host   [--relay ws://127.0.0.1:8787] [--harness antigravity|claude] [--session <id>] [--room <token>] [--key <key>] [--name <user>]
+  wye join   <url-or-room#key> [--relay ws://127.0.0.1:8787] [--key <key>] [--name <user>]
   wye status
   wye stop   [<room-or-conversation-id>]`
 
@@ -20,6 +20,7 @@ const { values, positionals } = parseArgs({
 		harness: { type: 'string' },
 		session: { type: 'string', short: 's' },
 		room: { type: 'string' },
+		key: { type: 'string', short: 'k' },
 		name: { type: 'string', short: 'n' },
 		help: { type: 'boolean', short: 'h' }
 	}
@@ -52,6 +53,7 @@ if (cmd === 'relay') {
 		harness: values.harness,
 		sessionId: values.session,
 		room: values.room,
+		key: values.key,
 		name: values.name,
 		onEvent (ev) {
 			if (ev.type === 'presence') {
@@ -70,10 +72,9 @@ if (cmd === 'relay') {
 			process.exit(0)
 		}
 	})
-	const joinBase = session.relayUrl.replace(/\/+$/, '')
 	console.log(`room: ${session.room}`)
 	console.log(`web:  ${session.webUrl}`)
-	console.log(`join: wye join ${joinBase}/${session.room}`)
+	console.log(`join: wye join '${session.webUrl}'`)
 	console.log(`stop: wye stop ${session.room}`)
 	function shutdown () {
 		session.disconnect()
@@ -84,11 +85,12 @@ if (cmd === 'relay') {
 } else if (cmd === 'join') {
 	const target = positionals[1] || values.room
 	if (!target) {
-		console.error('Missing <url-or-room>.\n\n' + USAGE)
+		console.error('Missing <url-or-room#key>.\n\n' + USAGE)
 		process.exit(1)
 	}
 	await connectGuest({
 		target,
+		key: values.key,
 		relayUrl: values.relay,
 		name: values.name,
 		onClose () {
@@ -101,7 +103,7 @@ if (cmd === 'relay') {
 		console.log('No active wye host sessions.')
 	} else {
 		for (const h of active) {
-			console.log(`${h.room}\t${h.harness || 'unknown'}\tpid=${h.pid}\t${h.relayUrl}\t${h.workspace}`)
+			console.log(`${h.room}\t${h.harness || 'unknown'}\tpid=${h.pid}\t${h.webUrl || h.relayUrl}\t${h.workspace}`)
 		}
 	}
 } else if (cmd === 'stop') {

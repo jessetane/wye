@@ -1,3 +1,5 @@
+import { importKey, encryptJson, decryptJson } from '/crypto.js'
+
 const statusEl = document.getElementById('status')
 const logEl = document.getElementById('log')
 const formEl = document.getElementById('composer')
@@ -8,6 +10,8 @@ const params = new URLSearchParams(location.search)
 const guestName = params.get('name') || 'web'
 const stepNodes = new Map()
 let ws = null
+let cryptoKey = null
+let cachedMeta = null
 
 function nearBottom () {
 	return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 64
@@ -64,32 +68,59 @@ function renderStep (step) {
 }
 
 function updateHeader (meta, members) {
+	if (meta) cachedMeta = meta
 	const parts = [`room ${room}`]
 	if (Array.isArray(members) && members.length > 0) {
 		parts.push(members.map(m => `${m.name}${m.role === 'host' ? '*' : ''}`).join(', '))
 	}
-	if (meta && meta.workspace) parts.push(meta.workspace)
+	if (cachedMeta && cachedMeta.workspace) parts.push(cachedMeta.workspace)
 	statusEl.textContent = parts.join(' · ')
+}
+
+async function decryptRoster (members) {
+	const out = []
+	for (const m of members || []) {
+		const name = m.nameBox ? await decryptJson(cryptoKey, m.nameBox) : 'unknown'
+		out.push({ role: m.role, name })
+	}
+	return out
 }
 
 function connect () {
 	const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-	const query = new URLSearchParams({ role: 'guest', name: guestName }).toString()
-	ws = new WebSocket(`${proto}//${location.host}/ws/${encodeURIComponent(room)}?${query}`)
+	ws = new WebSocket(`${proto}//${location.host}/ws/${encodeURIComponent(room)}?role=guest`)
+	let chain = Promise.resolve()
+	ws.addEventListener('open', async () => {
+		const nameBox = await encryptJson(cryptoKey, guestName)
+		ws.send(JSON.stringify({ type: 'hello', nameBox }))
+	})
 	ws.addEventListener('message', event => {
-		const msg = JSON.parse(String(event.data))
-		if (msg.type === 'snapshot') {
-			updateHeader(msg.meta, msg.members)
-			for (const step of msg.steps || []) renderStep(step)
-			logEl.scrollTop = logEl.scrollHeight
-		} else if (msg.type === 'step') {
-			renderStep(msg.step)
-		} else if (msg.type === 'presence') {
-			updateHeader(msg.meta, msg.members)
-			appendNotice(`${msg.name} ${msg.event.replaceAll('_', ' ')}`)
-		} else if (msg.type === 'error') {
-			appendNotice(`error: ${msg.message}`)
-		}
+		chain = chain.then(async () => {
+			const msg = JSON.parse(String(event.data))
+			if (msg.type === 'snapshot') {
+				const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
+				const members = await decryptRoster(msg.members)
+				updateHeader(meta, members)
+				for (const item of msg.steps || []) {
+					const step = await decryptJson(cryptoKey, item.box)
+					renderStep(step)
+				}
+				logEl.scrollTop = logEl.scrollHeight
+			} else if (msg.type === 'step' && typeof msg.box === 'string') {
+				const step = await decryptJson(cryptoKey, msg.box)
+				renderStep(step)
+			} else if (msg.type === 'presence') {
+				const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
+				const members = await decryptRoster(msg.members)
+				const peerName = msg.nameBox ? await decryptJson(cryptoKey, msg.nameBox) : 'peer'
+				updateHeader(meta, members)
+				appendNotice(`${peerName} ${msg.event.replaceAll('_', ' ')}`)
+			} else if (msg.type === 'error') {
+				appendNotice(`error: ${msg.message}`)
+			}
+		}).catch(err => {
+			appendNotice(`decryption failed (check #key in URL): ${err.message}`)
+		})
 	})
 	ws.addEventListener('close', () => {
 		statusEl.textContent = `room ${room} · reconnecting...`
@@ -97,11 +128,12 @@ function connect () {
 	})
 }
 
-function submitPrompt () {
+async function submitPrompt () {
 	const text = inputEl.value.trim()
-	if (!text || !ws || ws.readyState !== WebSocket.OPEN) return
-	ws.send(JSON.stringify({ type: 'prompt', text }))
+	if (!text || !cryptoKey || !ws || ws.readyState !== WebSocket.OPEN) return
 	inputEl.value = ''
+	const box = await encryptJson(cryptoKey, { text })
+	ws.send(JSON.stringify({ type: 'prompt', box }))
 }
 
 formEl.addEventListener('submit', event => {
@@ -122,4 +154,25 @@ stopBtn.addEventListener('click', () => {
 	}
 })
 
-connect()
+async function boot () {
+	const keyStr = location.hash.slice(1).trim()
+	if (!keyStr) {
+		statusEl.textContent = `room ${room} · missing #key`
+		appendNotice('missing encryption #key in URL fragment')
+		inputEl.disabled = true
+		stopBtn.disabled = true
+		return
+	}
+	try {
+		cryptoKey = await importKey(keyStr)
+		connect()
+	} catch (err) {
+		statusEl.textContent = `room ${room} · invalid #key`
+		appendNotice(err.message)
+		inputEl.disabled = true
+		stopBtn.disabled = true
+	}
+}
+
+window.addEventListener('hashchange', () => location.reload())
+boot()

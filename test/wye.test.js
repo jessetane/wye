@@ -183,12 +183,15 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	})
 	assert.equal(hostSession.harness, 'antigravity')
 	assert.equal(hostSession.room, convId)
+	assert.ok(hostSession.key.length >= 20)
 	assert.equal(listHosts(stateDir).length, 1)
 	const htmlRes = await fetch(`http://127.0.0.1:${relayPort}/${convId}`)
 	assert.equal(htmlRes.status, 200)
 	assert.match(await htmlRes.text(), /<script type="module" src="\/app\.js"><\/script>/)
 	const cssRes = await fetch(`http://127.0.0.1:${relayPort}/style.css`)
 	assert.equal(cssRes.status, 200)
+	const cryptoRes = await fetch(`http://127.0.0.1:${relayPort}/crypto.js`)
+	assert.equal(cryptoRes.status, 200)
 	const seenSteps = []
 	let resolveLiveDone
 	const liveDone = new Promise(resolve => { resolveLiveDone = resolve })
@@ -196,7 +199,7 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	let renderedOutput = ''
 	out.on('data', chunk => { renderedOutput += chunk.toString('utf8') })
 	const guestSession = await connectGuest({
-		target: `${relayUrl}/${convId}`,
+		target: hostSession.webUrl,
 		name: 'jesse',
 		interactive: false,
 		output: out,
@@ -207,7 +210,10 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	})
 	await new Promise(resolve => setTimeout(resolve, 60))
 	assert.equal(seenSteps.length, 2)
-	guestSession.sendPrompt('hey partner, jumping in!')
+	const relayRoom = relay.rooms.get(convId)
+	assert.ok(!JSON.stringify([...relayRoom.steps.values()]).includes('already chatting in desktop'))
+	assert.ok(!JSON.stringify(relayRoom.metaBox).includes('/Users/partner/project'))
+	await guestSession.sendPrompt('hey partner, jumping in!')
 	await liveDone
 	guestSession.sendCancel()
 	await cancelRpcDone
@@ -218,15 +224,31 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	assert.deepEqual(receivedRpc[1].payload, { cascadeId: convId, killBackgroundTasks: false })
 	assert.match(renderedOutput, / > already chatting in desktop /)
 	assert.match(renderedOutput, / > hey partner, jumping in! /)
+	await assert.rejects(async () => {
+		const wrongKeyUrl = `${hostSession.webUrl.split('#')[0]}#AAAAAAAAAAAAAAAAAAAAAA`
+		let decryptErr
+		const badGuest = await connectGuest({
+			target: wrongKeyUrl,
+			name: 'intruder',
+			interactive: false,
+			output: new PassThrough(),
+			onError (err) {
+				decryptErr = err
+			}
+		})
+		await new Promise(resolve => setTimeout(resolve, 50))
+		badGuest.disconnect()
+		if (decryptErr) throw decryptErr
+	})
 	guestSession.disconnect()
 	await relay.close()
 	relay = createRelay()
 	await relay.open(relayPort, '127.0.0.1')
 	await reconnectedDone
-	await new Promise(resolve => setTimeout(resolve, 40))
+	await new Promise(resolve => setTimeout(resolve, 60))
 	let snapshotCount = 0
 	const guestAfterRestart = await connectGuest({
-		target: `${relayUrl}/${convId}`,
+		target: hostSession.webUrl,
 		name: 'jesse',
 		interactive: false,
 		output: new PassThrough(),
@@ -338,7 +360,7 @@ test('end-to-end Claude Code host discovers session, streams JSONL, and injects 
 	const replyStepDone = new Promise(resolve => { resolveReplyStep = resolve })
 	const guestSession = await connectGuest({
 		env: {},
-		target: `${relayUrl}/${sessionId}`,
+		target: hostSession.webUrl,
 		name: 'jesse',
 		interactive: false,
 		output: new PassThrough(),
@@ -350,7 +372,7 @@ test('end-to-end Claude Code host discovers session, streams JSONL, and injects 
 	await new Promise(resolve => setTimeout(resolve, 60))
 	assert.equal(seenSteps.length, 2)
 	assert.equal(seenSteps[0].text, 'Starting in Claude Desktop')
-	guestSession.sendPrompt('hi from jesse!')
+	await guestSession.sendPrompt('hi from jesse!')
 	await promptFrameDone
 	await replyStepDone
 	assert.equal(seenSteps[2].role, 'user')

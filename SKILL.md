@@ -9,7 +9,7 @@ description: >-
 
 # Wye — Live Conversation Splitter
 
-Allows a partner to join the host's active **Antigravity** (Desktop or `agy` CLI) or **Claude Code** (Desktop Code tab or `claude` CLI) conversation in real time via CLI (`wye join`) or browser (`http(s)://.../<room>`). Both participants submit plain user prompts into the live session, and the host stays directly inside their open Desktop or CLI window.
+Allows a partner to join the host's active **Antigravity** (Desktop or `agy` CLI) or **Claude Code** (Desktop Code tab or `claude` CLI) conversation in real time via CLI (`wye join`) or browser (`http(s)://.../<room>#<key>`). Sessions are end-to-end encrypted (`AES-GCM` with the `#<key>` URL fragment never sent to the relay). Both participants submit plain user prompts into the live session, and the host stays directly inside their open Desktop or CLI window.
 
 CLI entrypoint: [wye.js](./bin/wye.js)
 
