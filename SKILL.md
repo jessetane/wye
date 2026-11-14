@@ -2,13 +2,14 @@
 name: collab
 description: >-
   Share the current live Antigravity Desktop or CLI conversation in real time
-  with a partner, or stop an active collab share. Activate when the user asks
-  to share, collaborate on, host, or stop sharing a conversation.
+  with a partner, check active shares, or stop an active collab share. Activate
+  when the user asks to share, collaborate on, host, or stop sharing a
+  conversation.
 ---
 
 # Collab — Live Conversation Sharing
 
-Allows a guest to join the host's active Antigravity Desktop or `agy` CLI conversation in real time. Both participants submit plain user prompts into the live session, and the host stays directly inside their open Antigravity Desktop or CLI window.
+Allows a guest to join the host's active Antigravity Desktop or `agy` CLI conversation in real time via CLI (`collab join`) or browser (`http(s)://.../<room>`). Both participants submit plain user prompts into the live session, and the host stays directly inside their open Antigravity Desktop or CLI window.
 
 CLI entrypoint: [collab.js](./bin/collab.js)
 
@@ -23,8 +24,12 @@ CLI entrypoint: [collab.js](./bin/collab.js)
    ```sh
    node /path/to/collab/bin/collab.js host [--relay <ws-url>] [--room <optional-room>]
    ```
-3. Check the task output (via `manage_task` `status` if backgrounded before printing) and give the user the exact `collab join <url>` command printed by `collab host`.
+3. Check the task output (via `manage_task` `status` if backgrounded before printing) and share both the `web:` URL and `join:` CLI command printed by `collab host`.
 
 ## Stopping a Share
 
-- Use `manage_task` (`list` then `kill`) to terminate the `collab host` background task.
+Run `collab stop` targeting this conversation (or run `collab stop` from any terminal):
+
+```sh
+node /path/to/collab/bin/collab.js stop "$ANTIGRAVITY_CONVERSATION_ID"
+```

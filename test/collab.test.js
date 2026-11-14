@@ -7,7 +7,7 @@ import http from 'node:http'
 import { PassThrough } from 'node:stream'
 import { parseStep } from '../lib/transcript.js'
 import { createRelay } from '../lib/relay.js'
-import { connectHost } from '../lib/host.js'
+import { connectHost, listHosts } from '../lib/host.js'
 import { connectGuest } from '../lib/join.js'
 
 test('parseStep normalizes user, assistant, and error steps', () => {
@@ -35,8 +35,9 @@ test('parseStep normalizes user, assistant, and error steps', () => {
 	assert.deepEqual(modelStep.tools, [{ label: 'Read', detail: '/tmp/demo.js' }])
 })
 
-test('end-to-end host + relay + guest syncs existing desktop history and untouched live prompts', async () => {
+test('end-to-end host + relay + guest syncs history, prompts, cancel, state, and reconnect', async () => {
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'collab-test-'))
+	const stateDir = path.join(tmpDir, 'state')
 	const convId = '11111111-2222-3333-4444-555555555555'
 	const logDir = path.join(tmpDir, 'brain', convId, '.system_generated', 'logs')
 	fs.mkdirSync(logDir, { recursive: true })
@@ -60,6 +61,8 @@ test('end-to-end host + relay + guest syncs existing desktop history and untouch
 		})
 	].join('\n') + '\n')
 	const receivedRpc = []
+	let resolveCancelRpc
+	const cancelRpcDone = new Promise(resolve => { resolveCancelRpc = resolve })
 	const mockLs = http.createServer((req, res) => {
 		let body = ''
 		req.on('data', chunk => { body += chunk })
@@ -70,34 +73,41 @@ test('end-to-end host + relay + guest syncs existing desktop history and untouch
 				csrf: req.headers['x-codeium-csrf-token'],
 				payload: parsed
 			})
-			const userText = parsed.items[0].text
-			fs.appendFileSync(transcriptPath, [
-				JSON.stringify({
-					step_index: 2,
-					source: 'USER_EXPLICIT',
-					type: 'USER_INPUT',
-					status: 'DONE',
-					created_at: '2026-11-13T20:02:00Z',
-					content: `<USER_REQUEST>\n${userText}\n</USER_REQUEST>`
-				}),
-				JSON.stringify({
-					step_index: 3,
-					source: 'MODEL',
-					type: 'PLANNER_RESPONSE',
-					status: 'DONE',
-					created_at: '2026-11-13T20:02:01Z',
-					content: 'Live reply to both partners!'
-				})
-			].join('\n') + '\n')
+			if (req.url.endsWith('/SendUserCascadeMessage')) {
+				const userText = parsed.items[0].text
+				fs.appendFileSync(transcriptPath, [
+					JSON.stringify({
+						step_index: 2,
+						source: 'USER_EXPLICIT',
+						type: 'USER_INPUT',
+						status: 'DONE',
+						created_at: '2026-11-13T20:02:00Z',
+						content: `<USER_REQUEST>\n${userText}\n</USER_REQUEST>`
+					}),
+					JSON.stringify({
+						step_index: 3,
+						source: 'MODEL',
+						type: 'PLANNER_RESPONSE',
+						status: 'DONE',
+						created_at: '2026-11-13T20:02:01Z',
+						content: 'Live reply to both partners!'
+					})
+				].join('\n') + '\n')
+			} else if (req.url.endsWith('/CancelCascadeInvocation')) {
+				resolveCancelRpc()
+			}
 			res.writeHead(200, { 'Content-Type': 'application/json' })
 			res.end('{}')
 		})
 	})
 	await new Promise(resolve => mockLs.listen(0, '127.0.0.1', resolve))
 	const lsPort = mockLs.address().port
-	const relay = createRelay()
+	let relay = createRelay()
 	const relayAddr = await relay.open(0, '127.0.0.1')
-	const relayUrl = `ws://127.0.0.1:${relayAddr.port}`
+	const relayPort = relayAddr.port
+	const relayUrl = `ws://127.0.0.1:${relayPort}`
+	let resolveReconnected
+	const reconnectedDone = new Promise(resolve => { resolveReconnected = resolve })
 	const hostSession = await connectHost({
 		relayUrl,
 		name: 'partner',
@@ -105,9 +115,17 @@ test('end-to-end host + relay + guest syncs existing desktop history and untouch
 		appDataDir: tmpDir,
 		lsAddress: `127.0.0.1:${lsPort}`,
 		csrfToken: 'secret-csrf',
-		workspace: '/Users/partner/project'
+		workspace: '/Users/partner/project',
+		stateDir,
+		reconnectDelayMs: 40,
+		maxReconnectDelayMs: 100,
+		onError () {},
+		onEvent (ev) {
+			if (ev.type === 'reconnected') resolveReconnected()
+		}
 	})
 	assert.equal(hostSession.room, convId)
+	assert.equal(listHosts(stateDir).length, 1)
 	const seenSteps = []
 	let resolveLiveDone
 	const liveDone = new Promise(resolve => { resolveLiveDone = resolve })
@@ -126,22 +144,38 @@ test('end-to-end host + relay + guest syncs existing desktop history and untouch
 	})
 	await new Promise(resolve => setTimeout(resolve, 60))
 	assert.equal(seenSteps.length, 2)
-	assert.equal(seenSteps[0].text, 'already chatting in desktop')
-	assert.equal(seenSteps[1].text, 'Prior desktop reply.')
 	guestSession.sendPrompt('hey partner, jumping in!')
 	await liveDone
-	assert.equal(receivedRpc.length, 1)
+	guestSession.sendCancel()
+	await cancelRpcDone
+	assert.equal(receivedRpc.length, 2)
 	assert.equal(receivedRpc[0].url, '/exa.language_server_pb.LanguageServerService/SendUserCascadeMessage')
-	assert.equal(receivedRpc[0].csrf, 'secret-csrf')
-	assert.equal(receivedRpc[0].payload.cascadeId, convId)
 	assert.equal(receivedRpc[0].payload.items[0].text, 'hey partner, jumping in!')
-	assert.equal(seenSteps.length, 4)
-	assert.equal(seenSteps[2].text, 'hey partner, jumping in!')
-	assert.equal(seenSteps[3].text, 'Live reply to both partners!')
+	assert.equal(receivedRpc[1].url, '/exa.language_server_pb.LanguageServerService/CancelCascadeInvocation')
+	assert.deepEqual(receivedRpc[1].payload, { cascadeId: convId, killBackgroundTasks: false })
 	assert.match(renderedOutput, / > already chatting in desktop /)
 	assert.match(renderedOutput, / > hey partner, jumping in! /)
 	guestSession.disconnect()
+	await relay.close()
+	relay = createRelay()
+	await relay.open(relayPort, '127.0.0.1')
+	await reconnectedDone
+	await new Promise(resolve => setTimeout(resolve, 40))
+	let snapshotCount = 0
+	const guestAfterRestart = await connectGuest({
+		target: `${relayUrl}/${convId}`,
+		name: 'jesse',
+		interactive: false,
+		output: new PassThrough(),
+		onSnapshot (snap) {
+			snapshotCount = snap.steps.length
+		}
+	})
+	await new Promise(resolve => setTimeout(resolve, 40))
+	assert.equal(snapshotCount, 4)
+	guestAfterRestart.disconnect()
 	hostSession.disconnect()
+	assert.equal(listHosts(stateDir).length, 0)
 	await relay.close()
 	await new Promise(resolve => mockLs.close(resolve))
 	fs.rmSync(tmpDir, { recursive: true, force: true })

@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
 import { createRelay } from '../lib/relay.js'
-import { connectHost } from '../lib/host.js'
+import { connectHost, listHosts, stopHosts } from '../lib/host.js'
 import { connectGuest } from '../lib/join.js'
 
 const USAGE = `Usage:
-  collab relay [--port 8787] [--bind 0.0.0.0]
-  collab host  [--relay ws://127.0.0.1:8787] [--room <token>] [--name <user>]
-  collab join  <url-or-room> [--relay ws://127.0.0.1:8787] [--name <user>]`
+  collab relay  [--port 8787] [--bind 0.0.0.0]
+  collab host   [--relay ws://127.0.0.1:8787] [--room <token>] [--name <user>]
+  collab join   <url-or-room> [--relay ws://127.0.0.1:8787] [--name <user>]
+  collab status
+  collab stop   [<room-or-conversation-id>]`
 
 const { values, positionals } = parseArgs({
 	allowPositionals: true,
@@ -52,16 +54,23 @@ if (cmd === 'relay') {
 				console.log(`[presence] ${ev.name} ${ev.event}`)
 			} else if (ev.type === 'injected') {
 				console.log(`[prompt] ${ev.text}`)
+			} else if (ev.type === 'cancelled') {
+				console.log(`[cancel] requested by ${ev.sender}`)
+			} else if (ev.type === 'reconnecting') {
+				console.error(`[reconnect] retrying in ${ev.delay}ms`)
+			} else if (ev.type === 'reconnected') {
+				console.log('[reconnect] restored relay connection')
 			}
 		},
 		onClose () {
-			console.error('collab host disconnected from relay')
-			process.exit(1)
+			process.exit(0)
 		}
 	})
 	const joinBase = session.relayUrl.replace(/\/+$/, '')
 	console.log(`room: ${session.room}`)
+	console.log(`web:  ${session.webUrl}`)
 	console.log(`join: collab join ${joinBase}/${session.room}`)
+	console.log(`stop: collab stop ${session.room}`)
 	function shutdown () {
 		session.disconnect()
 		process.exit(0)
@@ -82,6 +91,25 @@ if (cmd === 'relay') {
 			process.exit(0)
 		}
 	})
+} else if (cmd === 'status') {
+	const active = listHosts()
+	if (active.length === 0) {
+		console.log('No active collab host sessions.')
+	} else {
+		for (const h of active) {
+			console.log(`${h.room}\tpid=${h.pid}\t${h.relayUrl}\t${h.workspace}`)
+		}
+	}
+} else if (cmd === 'stop') {
+	const target = positionals[1] || values.room || ''
+	const stopped = stopHosts(target)
+	if (stopped.length === 0) {
+		console.log('No matching active collab host sessions.')
+	} else {
+		for (const h of stopped) {
+			console.log(`stopped ${h.room} (pid ${h.pid})`)
+		}
+	}
 } else {
 	console.error(`Unknown subcommand: ${cmd}\n\n${USAGE}`)
 	process.exit(1)
