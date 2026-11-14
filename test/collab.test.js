@@ -126,6 +126,11 @@ test('end-to-end host + relay + guest syncs history, prompts, cancel, state, and
 	})
 	assert.equal(hostSession.room, convId)
 	assert.equal(listHosts(stateDir).length, 1)
+	const htmlRes = await fetch(`http://127.0.0.1:${relayPort}/${convId}`)
+	assert.equal(htmlRes.status, 200)
+	assert.match(await htmlRes.text(), /<script type="module" src="\/app\.js"><\/script>/)
+	const cssRes = await fetch(`http://127.0.0.1:${relayPort}/style.css`)
+	assert.equal(cssRes.status, 200)
 	const seenSteps = []
 	let resolveLiveDone
 	const liveDone = new Promise(resolve => { resolveLiveDone = resolve })
