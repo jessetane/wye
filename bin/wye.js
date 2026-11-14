@@ -5,11 +5,11 @@ import { connectHost, listHosts, stopHosts } from '../lib/host.js'
 import { connectGuest } from '../lib/join.js'
 
 const USAGE = `Usage:
-  collab relay  [--port 8787] [--bind 0.0.0.0]
-  collab host   [--relay ws://127.0.0.1:8787] [--room <token>] [--name <user>]
-  collab join   <url-or-room> [--relay ws://127.0.0.1:8787] [--name <user>]
-  collab status
-  collab stop   [<room-or-conversation-id>]`
+  wye relay  [--port 8787] [--bind 0.0.0.0]
+  wye host   [--relay ws://127.0.0.1:8787] [--room <token>] [--name <user>]
+  wye join   <url-or-room> [--relay ws://127.0.0.1:8787] [--name <user>]
+  wye status
+  wye stop   [<room-or-conversation-id>]`
 
 const { values, positionals } = parseArgs({
 	allowPositionals: true,
@@ -34,7 +34,7 @@ if (cmd === 'relay') {
 	const bind = values.bind || process.env.BIND || '0.0.0.0'
 	const relay = createRelay({ port, host: bind })
 	const addr = await relay.open(port, bind)
-	console.log(`collab relay listening on ws://${addr.address}:${addr.port}`)
+	console.log(`wye relay listening on ws://${addr.address}:${addr.port}`)
 	async function shutdown () {
 		try {
 			await relay.close()
@@ -69,8 +69,8 @@ if (cmd === 'relay') {
 	const joinBase = session.relayUrl.replace(/\/+$/, '')
 	console.log(`room: ${session.room}`)
 	console.log(`web:  ${session.webUrl}`)
-	console.log(`join: collab join ${joinBase}/${session.room}`)
-	console.log(`stop: collab stop ${session.room}`)
+	console.log(`join: wye join ${joinBase}/${session.room}`)
+	console.log(`stop: wye stop ${session.room}`)
 	function shutdown () {
 		session.disconnect()
 		process.exit(0)
@@ -94,7 +94,7 @@ if (cmd === 'relay') {
 } else if (cmd === 'status') {
 	const active = listHosts()
 	if (active.length === 0) {
-		console.log('No active collab host sessions.')
+		console.log('No active wye host sessions.')
 	} else {
 		for (const h of active) {
 			console.log(`${h.room}\tpid=${h.pid}\t${h.relayUrl}\t${h.workspace}`)
@@ -104,7 +104,7 @@ if (cmd === 'relay') {
 	const target = positionals[1] || values.room || ''
 	const stopped = stopHosts(target)
 	if (stopped.length === 0) {
-		console.log('No matching active collab host sessions.')
+		console.log('No matching active wye host sessions.')
 	} else {
 		for (const h of stopped) {
 			console.log(`stopped ${h.room} (pid ${h.pid})`)

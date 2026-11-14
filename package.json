@@ -1,10 +1,10 @@
 {
-	"name": "collab",
+	"name": "wye",
 	"version": "0.1.0",
-	"description": "Live multiplayer collaboration for Antigravity Desktop and CLI conversations",
+	"description": "Live multiplayer splitter for Antigravity Desktop and CLI conversations",
 	"type": "module",
 	"bin": {
-		"collab": "./bin/collab.js"
+		"wye": "./bin/wye.js"
 	},
 	"scripts": {
 		"test": "node --test"

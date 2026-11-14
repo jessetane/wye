@@ -36,7 +36,7 @@ test('parseStep normalizes user, assistant, and error steps', () => {
 })
 
 test('end-to-end host + relay + guest syncs history, prompts, cancel, state, and reconnect', async () => {
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'collab-test-'))
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wye-test-'))
 	const stateDir = path.join(tmpDir, 'state')
 	const convId = '11111111-2222-3333-4444-555555555555'
 	const logDir = path.join(tmpDir, 'brain', convId, '.system_generated', 'logs')
