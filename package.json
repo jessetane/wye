@@ -1,0 +1,12 @@
+{
+	"name": "collab",
+	"version": "0.1.0",
+	"description": "Live multiplayer collaboration for Antigravity Desktop and CLI conversations",
+	"type": "module",
+	"bin": {
+		"collab": "./bin/collab.js"
+	},
+	"scripts": {
+		"test": "node --test"
+	}
+}
