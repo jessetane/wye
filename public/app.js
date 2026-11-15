@@ -227,38 +227,52 @@ async function decryptRoster (members) {
 function connect () {
 	const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
 	ws = new WebSocket(`${proto}//${location.host}/ws/${encodeURIComponent(room)}?role=guest`)
-	let chain = Promise.resolve()
+	const inbox = []
+	let draining = false
+	async function drainInbox () {
+		if (draining) return
+		draining = true
+		try {
+			while (inbox.length > 0) {
+				const raw = inbox.shift()
+				try {
+					const msg = JSON.parse(String(raw))
+					if (msg.type === 'snapshot') {
+						const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
+						const members = await decryptRoster(msg.members)
+						updateHeader(meta, members)
+						for (const item of msg.steps || []) {
+							const step = await decryptJson(cryptoKey, item.box)
+							renderStep(step)
+						}
+						logEl.scrollTop = logEl.scrollHeight
+					} else if (msg.type === 'step' && typeof msg.box === 'string') {
+						const step = await decryptJson(cryptoKey, msg.box)
+						renderStep(step)
+					} else if (msg.type === 'presence') {
+						const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
+						const members = await decryptRoster(msg.members)
+						const peerName = msg.nameBox ? await decryptJson(cryptoKey, msg.nameBox) : 'peer'
+						updateHeader(meta, members)
+						appendNotice(`${peerName} ${msg.event.replaceAll('_', ' ')}`)
+					} else if (msg.type === 'error') {
+						appendNotice(`error: ${msg.message}`)
+					}
+				} catch (err) {
+					appendNotice(`decryption failed (check #key in URL): ${err.message}`)
+				}
+			}
+		} finally {
+			draining = false
+		}
+	}
 	ws.addEventListener('open', async () => {
 		const nameBox = await encryptJson(cryptoKey, guestName)
 		ws.send(JSON.stringify({ type: 'hello', nameBox }))
 	})
 	ws.addEventListener('message', event => {
-		chain = chain.then(async () => {
-			const msg = JSON.parse(String(event.data))
-			if (msg.type === 'snapshot') {
-				const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
-				const members = await decryptRoster(msg.members)
-				updateHeader(meta, members)
-				for (const item of msg.steps || []) {
-					const step = await decryptJson(cryptoKey, item.box)
-					renderStep(step)
-				}
-				logEl.scrollTop = logEl.scrollHeight
-			} else if (msg.type === 'step' && typeof msg.box === 'string') {
-				const step = await decryptJson(cryptoKey, msg.box)
-				renderStep(step)
-			} else if (msg.type === 'presence') {
-				const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
-				const members = await decryptRoster(msg.members)
-				const peerName = msg.nameBox ? await decryptJson(cryptoKey, msg.nameBox) : 'peer'
-				updateHeader(meta, members)
-				appendNotice(`${peerName} ${msg.event.replaceAll('_', ' ')}`)
-			} else if (msg.type === 'error') {
-				appendNotice(`error: ${msg.message}`)
-			}
-		}).catch(err => {
-			appendNotice(`decryption failed (check #key in URL): ${err.message}`)
-		})
+		inbox.push(event.data)
+		drainInbox()
 	})
 	ws.addEventListener('close', () => {
 		statusEl.textContent = `room ${room} · reconnecting...`
