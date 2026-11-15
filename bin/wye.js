@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
 import { createRelay } from '../lib/relay.js'
-import { connectHost, listHosts, stopHosts } from '../lib/host.js'
+import { DEFAULT_RELAY_URL, connectHost, listHosts, stopHosts } from '../lib/host.js'
 import { connectGuest } from '../lib/join.js'
 
 const USAGE = `Usage:
   wye relay  [--port 8787] [--bind 0.0.0.0]
-  wye host   [--relay ws://127.0.0.1:8787] [--harness antigravity|claude] [--session <id>] [--room <token>] [--key <key>] [--name <user>]
-  wye join   <url-or-room#key> [--relay ws://127.0.0.1:8787] [--key <key>] [--name <user>]
+  wye host   [--relay ${DEFAULT_RELAY_URL}] [--harness antigravity|claude] [--session <id>] [--room <token>] [--key <key>] [--name <user>]
+  wye join   <url-or-room#key> [--relay ${DEFAULT_RELAY_URL}] [--key <key>] [--name <user>]
   wye status
   wye stop   [<room-or-conversation-id>]`
 

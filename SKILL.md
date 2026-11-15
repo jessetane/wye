@@ -15,21 +15,17 @@ CLI entrypoint: [wye.js](./bin/wye.js)
 
 ## Starting a Share (Host)
 
-1. Check if the target relay is reachable (default local relay: `http://127.0.0.1:8787/healthz`, unless the user specifies a remote `ws://` or `wss://` relay URL or `WYE_RELAY` is set).
-   - If using the local default relay and `http://127.0.0.1:8787/healthz` is not running yet, start it in the background (Antigravity: `IsDaemon: true`, `WaitMsBeforeAsync: 1500`; Claude Code: `run_in_background: true`):
-     ```sh
-     wye relay
-     ```
-2. Launch `wye host` in the background (Antigravity: `IsDaemon: true`, `WaitMsBeforeAsync: 1500`; Claude Code: `run_in_background: true`). `wye host` auto-detects whether it is running inside Antigravity or Claude Code:
+1. Launch `wye host` in the background (Antigravity: `IsDaemon: true`, `WaitMsBeforeAsync: 1500`; Claude Code: `run_in_background: true`). By default it connects to `wss://wye.jessetane.com` and auto-detects whether it is running inside Antigravity or Claude Code (only start a local `wye relay` first if the user explicitly asks for `--relay ws://127.0.0.1:8787`):
    ```sh
    wye host [--relay <ws-url>] [--room <optional-room>]
    ```
-3. Read the background task output and share both the `web:` URL and `join:` CLI command printed by `wye host`.
+2. Read the background task output and share both the `web:` URL and `join:` CLI command printed by `wye host`.
 
-## Stopping a Share
+## Checking or Stopping a Share
 
-Run `wye stop` (passing the room/session ID if multiple shares are running, or with no arguments to stop active shares):
+Run `wye status` to list active shares, or `wye stop` (passing the room/session ID if multiple shares are running, or with no arguments to stop active shares):
 
 ```sh
+wye status
 wye stop [<room-or-session-id>]
 ```
