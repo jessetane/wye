@@ -29,7 +29,9 @@ wye status
 wye stop [<room-or-conversation-id>]
 ```
 
-### Self-hosting the relay
+### Relay
+By default, `wye` connects to the public relay at `wss://wye.jessetane.com`. To self-host a relay and point clients at it via `--relay` or `WYE_RELAY`:
+
 ```sh
 wye relay [--port 8787] [--bind 0.0.0.0]
 ```
