@@ -6,7 +6,7 @@ Pair programming with an AI agent usually means screensharing or copy-pasting pr
 
 ## How
 
-* Auto-detects the active **Antigravity** (Desktop or `agy` CLI) or **Claude Code** (Desktop or `claude` CLI) session.
+* Runs inside an active **Antigravity** (Desktop or `agy` CLI) or **Claude Code** (Desktop or `claude` CLI) session, inheriting the session's environment to identify the conversation.
 * Tails the local conversation transcript and injects partner prompts directly into your live session.
 * Zero dependencies; built on Node.js native `fetch`, `WebSocket`, and `node:crypto`.
 * End-to-end encrypted (`AES-GCM` using a key in the `#<key>` URL fragment, which is never sent to the relay).
@@ -21,7 +21,7 @@ ln -sf "$(npm root -g)/wye/SKILL.md" ~/.gemini/config/skills/wye/SKILL.md
 For Claude Code, link `SKILL.md` to `~/.claude/skills/wye/SKILL.md` instead.
 
 ## Usage
-When `wye host` is launched from inside Antigravity or Claude Code, it prints a `web:` URL (open in any browser) and a `join:` CLI command:
+To share a conversation, ask the agent inside that conversation to share it (e.g. *"share this conversation"*). The skill instructs the agent to run `wye host` in the background and reply with a `web:` URL (open in any browser) and a `join:` CLI command:
 
 ```sh
 wye host [--relay wss://wye.jessetane.com] [--harness antigravity|claude] [--room <token>]
