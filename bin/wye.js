@@ -37,7 +37,8 @@ if (cmd === 'relay') {
 	const bind = values.bind || process.env.BIND || '0.0.0.0'
 	const relay = createRelay({ port, host: bind })
 	const addr = await relay.open(port, bind)
-	console.log(`wye relay listening on ws://${addr.address}:${addr.port}`)
+	const hostLabel = addr.family === 'IPv6' ? `[${addr.address}]` : addr.address
+	console.log(`wye relay listening on ws://${hostLabel}:${addr.port}`)
 	async function shutdown () {
 		try {
 			await relay.close()
