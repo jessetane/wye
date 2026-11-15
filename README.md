@@ -6,8 +6,7 @@ Pair programming with an AI agent usually means screensharing or copy-pasting pr
 
 ## How
 
-* Runs inside an active **Antigravity** (Desktop or `agy` CLI) or **Claude Code** (Desktop or `claude` CLI) session, inheriting the session's environment to identify the conversation.
-* Tails the local conversation transcript and injects partner prompts directly into your live session.
+* Runs inside an active **Antigravity** or **Claude Code** session, using the injected environment (`ANTIGRAVITY_*` env vars + local language server RPC for Antigravity; `CLAUDE_CODE_MESSAGING_SOCKET` + session files for Claude Code) to locate the transcript and inject prompts.
 * Zero dependencies; built on Node.js native `fetch`, `WebSocket`, and `node:crypto`.
 * End-to-end encrypted (`AES-GCM` using a key in the `#<key>` URL fragment, which is never sent to the relay).
 
@@ -37,3 +36,6 @@ wye relay [--port 8787] [--bind 0.0.0.0]
 
 ## Security
 Sessions are end-to-end encrypted between host and guests, and the relay never sees the `#<key>` fragment. However, anyone you share the link with can submit prompts directly to your live agent—with whatever filesystem, shell, and tool permissions your session has. Only share links with people you trust.
+
+## License
+MIT

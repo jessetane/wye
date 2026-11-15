@@ -8,5 +8,8 @@
 	},
 	"scripts": {
 		"test": "node --test"
-	}
+	},
+	"repository": "https://github.com/jessetane/wye",
+	"author": "jesse.tane@gmail.com",
+	"license": "MIT"
 }
