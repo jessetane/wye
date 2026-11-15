@@ -11,21 +11,12 @@ Pair programming with an AI agent usually means screensharing or copy-pasting pr
 * End-to-end encrypted (`AES-GCM` using a key in the `#<key>` URL fragment, which is never sent to the relay).
 
 ## Install
-Install the CLI:
+Install `wye` and link `SKILL.md` into `~/.gemini/config/skills/wye` (Antigravity) or `~/.claude/skills/wye` (Claude Code):
+
 ```sh
 npm i -g github:jessetane/wye
-```
-
-Link the skill for **Antigravity**:
-```sh
-mkdir -p ~/.gemini/config/skills/wye
-ln -sf "$(npm root -g)/wye/SKILL.md" ~/.gemini/config/skills/wye/SKILL.md
-```
-
-Link the skill for **Claude Code**:
-```sh
-mkdir -p ~/.claude/skills/wye
-ln -sf "$(npm root -g)/wye/SKILL.md" ~/.claude/skills/wye/SKILL.md
+mkdir -p <skills-dir>
+ln -sf "$(npm root -g)/wye/SKILL.md" <skills-dir>/SKILL.md
 ```
 
 ## Usage
