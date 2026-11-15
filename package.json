@@ -1,7 +1,7 @@
 {
 	"name": "wye",
 	"version": "0.1.0",
-	"description": "Live multiplayer splitter for Antigravity Desktop and CLI conversations",
+	"description": "Live multiplayer splitter for Antigravity and Claude Code conversations",
 	"type": "module",
 	"bin": {
 		"wye": "./bin/wye.js"
