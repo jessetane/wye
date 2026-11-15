@@ -11,21 +11,14 @@ Pair programming with an AI agent usually means screensharing or copy-pasting pr
 * Zero dependencies; built on Node.js native `fetch`, `WebSocket`, and `node:crypto`.
 * End-to-end encrypted (`AES-GCM` using a key in the `#<key>` URL fragment, which is never sent to the relay).
 
-## Quickstart (Antigravity)
-Paste this into an Antigravity conversation to have your agent install the skill and start sharing:
-
-> Install `wye` from `https://github.com/jessetane/wye` (`npm i -g github:jessetane/wye`), save its `SKILL.md` to `~/.gemini/config/skills/wye/SKILL.md`, and start sharing this conversation.
-
-*(Requires [Node.js](https://nodejs.org/). Once installed, you only need to ask Antigravity to "share this conversation" in future sessions.)*
-
-### Manual install
+## Install
 ```sh
 npm i -g github:jessetane/wye
 mkdir -p ~/.gemini/config/skills/wye
-curl -fsSL https://raw.githubusercontent.com/jessetane/wye/main/SKILL.md -o ~/.gemini/config/skills/wye/SKILL.md
+ln -sf "$(npm root -g)/wye/SKILL.md" ~/.gemini/config/skills/wye/SKILL.md
 ```
 
-For Claude Code, link or copy `SKILL.md` to `~/.claude/skills/wye/SKILL.md` instead.
+For Claude Code, link `SKILL.md` to `~/.claude/skills/wye/SKILL.md` instead.
 
 ## Usage
 When `wye host` is launched from inside Antigravity or Claude Code, it prints a `web:` URL (open in any browser) and a `join:` CLI command:
