@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
-import { createRelay } from '../lib/relay.js'
-import { DEFAULT_RELAY_URL, connectHost, listHosts, stopHosts } from '../lib/host.js'
-import { connectGuest } from '../lib/join.js'
+import { Relay } from '../lib/relay.js'
+import { DEFAULT_RELAY_URL, Host, listHosts, stopHosts } from '../lib/host.js'
+import { Guest } from '../lib/join.js'
 
 const USAGE = `Usage:
   wye relay  [--port 8787] [--bind 0.0.0.0]
@@ -35,7 +35,7 @@ if (values.help || !cmd) {
 if (cmd === 'relay') {
 	const port = values.port ? Number(values.port) : Number(process.env.PORT || 8787)
 	const bind = values.bind || process.env.BIND || '0.0.0.0'
-	const relay = createRelay({ port, host: bind })
+	const relay = new Relay({ port, host: bind })
 	const addr = await relay.open(port, bind)
 	const hostLabel = addr.family === 'IPv6' ? `[${addr.address}]` : addr.address
 	console.log(`wye relay listening on ws://${hostLabel}:${addr.port}`)
@@ -49,36 +49,42 @@ if (cmd === 'relay') {
 	process.on('SIGINT', shutdown)
 	process.on('SIGTERM', shutdown)
 } else if (cmd === 'host') {
-	const session = await connectHost({
+	const host = new Host({
 		relayUrl: values.relay,
 		harness: values.harness,
 		sessionId: values.session,
 		room: values.room,
 		key: values.key,
-		name: values.name,
-		onEvent (ev) {
-			if (ev.type === 'presence') {
-				console.log(`[presence] ${ev.name} ${ev.event}`)
-			} else if (ev.type === 'injected') {
-				console.log(`[prompt] ${ev.text}`)
-			} else if (ev.type === 'cancelled') {
-				console.log(`[cancel] requested by ${ev.sender}`)
-			} else if (ev.type === 'reconnecting') {
-				console.error(`[reconnect] retrying in ${ev.delay}ms`)
-			} else if (ev.type === 'reconnected') {
-				console.log('[reconnect] restored relay connection')
-			}
-		},
-		onClose () {
-			process.exit(0)
-		}
+		name: values.name
 	})
-	console.log(`room: ${session.room}`)
-	console.log(`web:  ${session.webUrl}`)
-	console.log(`join: wye join '${session.webUrl}'`)
-	console.log(`stop: wye stop ${session.room}`)
+	host.addEventListener('presence', ev => {
+		console.log(`[presence] ${ev.detail.name} ${ev.detail.event}`)
+	})
+	host.addEventListener('prompt', ev => {
+		console.log(`[prompt] ${ev.detail.text}`)
+	})
+	host.addEventListener('cancel', ev => {
+		console.log(`[cancel] requested by ${ev.detail.sender}`)
+	})
+	host.addEventListener('reconnecting', ev => {
+		console.error(`[reconnect] retrying in ${ev.detail.delay}ms`)
+	})
+	host.addEventListener('reconnected', () => {
+		console.log('[reconnect] restored relay connection')
+	})
+	host.addEventListener('error', ev => {
+		console.error(`[wye host] ${ev.detail.message}`)
+	})
+	host.addEventListener('close', () => {
+		process.exit(0)
+	})
+	await host.connect()
+	console.log(`room: ${host.room}`)
+	console.log(`web:  ${host.webUrl}`)
+	console.log(`join: wye join '${host.webUrl}'`)
+	console.log(`stop: wye stop ${host.room}`)
 	function shutdown () {
-		session.disconnect()
+		host.disconnect()
 		process.exit(0)
 	}
 	process.on('SIGINT', shutdown)
@@ -89,15 +95,16 @@ if (cmd === 'relay') {
 		console.error('Missing <url-or-room#key>.\n\n' + USAGE)
 		process.exit(1)
 	}
-	await connectGuest({
+	const guest = new Guest({
 		target,
 		key: values.key,
 		relayUrl: values.relay,
-		name: values.name,
-		onClose () {
-			process.exit(0)
-		}
+		name: values.name
 	})
+	guest.addEventListener('close', () => {
+		process.exit(0)
+	})
+	await guest.connect()
 } else if (cmd === 'status') {
 	const active = listHosts()
 	if (active.length === 0) {

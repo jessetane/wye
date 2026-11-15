@@ -7,7 +7,7 @@ Pair programming with an AI agent usually means screensharing or copy-pasting pr
 ## How
 
 * Runs inside an active **Antigravity** or **Claude Code** session, using the injected environment (`ANTIGRAVITY_*` env vars + local language server RPC for Antigravity; `CLAUDE_CODE_MESSAGING_SOCKET` + session files for Claude Code) to locate the transcript and inject prompts.
-* Zero dependencies; built on Node.js native `fetch`, `WebSocket`, and `node:crypto`.
+* Zero dependencies; built on Web Platform `fetch`, `WebSocket`, `EventTarget`, and `crypto.subtle`.
 * End-to-end encrypted (`AES-GCM` using a key in the `#<key>` URL fragment, which is never sent to the relay).
 
 ## Install

@@ -1,20 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
-import { PassThrough } from 'node:stream'
-import { createAntigravityStepParser } from '../lib/harnesses/antigravity.js'
-import { createClaudeStepParser, slugifyClaudeProject } from '../lib/harnesses/claude.js'
-import { createRelay } from '../lib/relay.js'
-import { connectHost, listHosts } from '../lib/host.js'
-import { connectGuest, formatStep } from '../lib/join.js'
+import * as antigravity from '../lib/harnesses/antigravity.js'
+import * as claude from '../lib/harnesses/claude.js'
+import { Relay } from '../lib/relay.js'
+import { Host, listHosts } from '../lib/host.js'
+import { Guest, formatStep } from '../lib/join.js'
 
 test('createAntigravityStepParser formats agy-style tools and correlates GENERIC + background outputs', () => {
-	const parse = createAntigravityStepParser({ homeDir: '/Users/jesse' })
+	const parse = antigravity.createStepParser({ homeDir: '/Users/jesse' })
 	const userStep = parse(JSON.stringify({
 		step_index: 0,
 		source: 'USER_EXPLICIT',
@@ -97,7 +95,7 @@ test('createAntigravityStepParser formats agy-style tools and correlates GENERIC
 })
 
 test('createClaudeStepParser coalesces assistant blocks, attaches tool_result outputs, and unwraps peer prompts', () => {
-	const parse = createClaudeStepParser({ homeDir: '/Users/jesse' })
+	const parse = claude.createStepParser({ homeDir: '/Users/jesse' })
 	assert.equal(parse(JSON.stringify({ type: 'mode', mode: 'normal' })), null)
 	const u1 = parse(JSON.stringify({
 		type: 'user',
@@ -232,13 +230,13 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	})
 	await new Promise(resolve => mockLs.listen(0, '127.0.0.1', resolve))
 	const lsPort = mockLs.address().port
-	let relay = createRelay()
+	let relay = new Relay()
 	const relayAddr = await relay.open(0, '127.0.0.1')
 	const relayPort = relayAddr.port
 	const relayUrl = `ws://127.0.0.1:${relayPort}`
 	let resolveReconnected
 	const reconnectedDone = new Promise(resolve => { resolveReconnected = resolve })
-	const hostSession = await connectHost({
+	const hostSession = new Host({
 		relayUrl,
 		name: 'partner',
 		conversationId: convId,
@@ -248,12 +246,10 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 		workspace: '/Users/partner/project',
 		stateDir,
 		reconnectDelayMs: 40,
-		maxReconnectDelayMs: 100,
-		onError () {},
-		onEvent (ev) {
-			if (ev.type === 'reconnected') resolveReconnected()
-		}
+		maxReconnectDelayMs: 100
 	})
+	hostSession.addEventListener('reconnected', () => resolveReconnected())
+	await hostSession.connect()
 	assert.equal(hostSession.harness, 'antigravity')
 	assert.equal(hostSession.room, convId)
 	assert.ok(hostSession.key.length >= 20)
@@ -273,27 +269,26 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	const seenSteps = []
 	let resolveLiveDone
 	const liveDone = new Promise(resolve => { resolveLiveDone = resolve })
-	const out = new PassThrough()
 	let renderedOutput = ''
-	out.on('data', chunk => { renderedOutput += chunk.toString('utf8') })
-	const guestSession = await connectGuest({
+	const guestSession = new Guest({
 		target: hostSession.webUrl,
 		name: 'jesse',
 		interactive: false,
-		output: out,
-		onStep (step) {
-			seenSteps.push(step)
-			if (step.index === 3) resolveLiveDone()
-		}
+		output: { write (s) { renderedOutput += s } }
 	})
+	guestSession.addEventListener('step', ev => {
+		seenSteps.push(ev.detail)
+		if (ev.detail.index === 3) resolveLiveDone()
+	})
+	await guestSession.connect()
 	await new Promise(resolve => setTimeout(resolve, 60))
 	assert.equal(seenSteps.length, 2)
 	const relayRoom = relay.rooms.get(convId)
 	assert.ok(!JSON.stringify([...relayRoom.steps.values()]).includes('already chatting in desktop'))
 	assert.ok(!JSON.stringify(relayRoom.metaBox).includes('/Users/partner/project'))
-	await guestSession.sendPrompt('hey partner, jumping in!')
+	await guestSession.send('hey partner, jumping in!')
 	await liveDone
-	guestSession.sendCancel()
+	guestSession.cancel()
 	await cancelRpcDone
 	assert.equal(receivedRpc.length, 2)
 	assert.equal(receivedRpc[0].url, '/exa.language_server_pb.LanguageServerService/SendUserCascadeMessage')
@@ -305,35 +300,37 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	await assert.rejects(async () => {
 		const wrongKeyUrl = `${hostSession.webUrl.split('#')[0]}#AAAAAAAAAAAAAAAAAAAAAA`
 		let decryptErr
-		const badGuest = await connectGuest({
+		const badGuest = new Guest({
 			target: wrongKeyUrl,
 			name: 'intruder',
 			interactive: false,
-			output: new PassThrough(),
-			onError (err) {
-				decryptErr = err
-			}
+			output: { write () {} }
 		})
+		badGuest.addEventListener('error', ev => {
+			decryptErr = ev.detail
+		})
+		await badGuest.connect()
 		await new Promise(resolve => setTimeout(resolve, 50))
 		badGuest.disconnect()
 		if (decryptErr) throw decryptErr
 	})
 	guestSession.disconnect()
 	await relay.close()
-	relay = createRelay()
+	relay = new Relay()
 	await relay.open(relayPort, '127.0.0.1')
 	await reconnectedDone
 	await new Promise(resolve => setTimeout(resolve, 60))
 	let snapshotCount = 0
-	const guestAfterRestart = await connectGuest({
+	const guestAfterRestart = new Guest({
 		target: hostSession.webUrl,
 		name: 'jesse',
 		interactive: false,
-		output: new PassThrough(),
-		onSnapshot (snap) {
-			snapshotCount = snap.steps.length
-		}
+		output: { write () {} }
 	})
+	guestAfterRestart.addEventListener('snapshot', ev => {
+		snapshotCount = ev.detail.steps.length
+	})
+	await guestAfterRestart.connect()
 	await new Promise(resolve => setTimeout(resolve, 40))
 	assert.equal(snapshotCount, 4)
 	guestAfterRestart.disconnect()
@@ -351,7 +348,7 @@ test('end-to-end Claude Code host discovers session, streams JSONL, and injects 
 	const workspace = path.join(shortTmp, 'proj')
 	const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 	const sockPath = path.join(shortTmp, 'cc.sock')
-	const projectDir = path.join(configDir, 'projects', slugifyClaudeProject(workspace))
+	const projectDir = path.join(configDir, 'projects', claude.slugifyProject(workspace))
 	fs.mkdirSync(sessionsDir, { recursive: true })
 	fs.mkdirSync(projectDir, { recursive: true })
 	fs.mkdirSync(workspace, { recursive: true })
@@ -408,7 +405,9 @@ test('end-to-end Claude Code host discovers session, streams JSONL, and injects 
 	})
 	await new Promise(resolve => udsServer.listen(sockPath, resolve))
 	const canonicalSock = fs.realpathSync(sockPath)
-	const sockHash = crypto.createHash('sha256').update(canonicalSock).digest('hex')
+	const sockDigest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalSock)))
+	let sockHash = ''
+	for (let i = 0; i < sockDigest.byteLength; i++) sockHash += sockDigest[i].toString(16).padStart(2, '0')
 	fs.writeFileSync(path.join(sessionsDir, `${process.pid}.json`), JSON.stringify({
 		pid: process.pid,
 		sessionId,
@@ -419,10 +418,10 @@ test('end-to-end Claude Code host discovers session, streams JSONL, and injects 
 	fs.writeFileSync(path.join(sessionsDir, `${process.pid}.${sockHash}.key`), JSON.stringify({
 		peerToken: 'claude-secret-peer-token'
 	}))
-	const relay = createRelay()
+	const relay = new Relay()
 	const relayAddr = await relay.open(0, '127.0.0.1')
 	const relayUrl = `ws://127.0.0.1:${relayAddr.port}`
-	const hostSession = await connectHost({
+	const hostSession = new Host({
 		env: {},
 		harness: 'claude',
 		claudeConfigDir: configDir,
@@ -431,32 +430,34 @@ test('end-to-end Claude Code host discovers session, streams JSONL, and injects 
 		name: 'wife',
 		trackState: false
 	})
+	await hostSession.connect()
 	assert.equal(hostSession.harness, 'claude')
 	assert.equal(hostSession.room, sessionId)
 	const seenSteps = []
 	let resolveReplyStep
 	const replyStepDone = new Promise(resolve => { resolveReplyStep = resolve })
-	const guestSession = await connectGuest({
+	const guestSession = new Guest({
 		env: {},
 		target: hostSession.webUrl,
 		name: 'jesse',
 		interactive: false,
-		output: new PassThrough(),
-		onStep (step) {
-			seenSteps.push(step)
-			if (step.index === 3) resolveReplyStep()
-		}
+		output: { write () {} }
 	})
+	guestSession.addEventListener('step', ev => {
+		seenSteps.push(ev.detail)
+		if (ev.detail.index === 3) resolveReplyStep()
+	})
+	await guestSession.connect()
 	await new Promise(resolve => setTimeout(resolve, 60))
 	assert.equal(seenSteps.length, 2)
 	assert.equal(seenSteps[0].text, 'Starting in Claude Desktop')
-	await guestSession.sendPrompt('hi from jesse!')
+	await guestSession.send('hi from jesse!')
 	await promptFrameDone
 	await replyStepDone
 	assert.equal(seenSteps[2].role, 'user')
 	assert.equal(seenSteps[2].text, 'hi from jesse!')
 	assert.equal(seenSteps[3].text, 'Got guest message in Claude!')
-	guestSession.sendCancel()
+	guestSession.cancel()
 	await cancelFrameDone
 	assert.deepEqual(receivedFrames[0][0], { type: 'auth', token: 'claude-secret-peer-token' })
 	assert.equal(receivedFrames[0][1].message.content, 'hi from jesse!')
@@ -494,9 +495,9 @@ test('large multi-tool step (>100KB encrypted) streams cleanly across WsPeer fra
 		JSON.stringify({ step_index: 4, type: 'GENERIC', status: 'DONE', content: bigChunk }),
 		JSON.stringify({ step_index: 5, type: 'GENERIC', status: 'DONE', content: bigChunk })
 	].join('\n') + '\n')
-	const relay = createRelay()
+	const relay = new Relay()
 	const addr = await relay.open(0, '127.0.0.1')
-	const host = await connectHost({
+	const host = new Host({
 		relayUrl: `ws://127.0.0.1:${addr.port}`,
 		conversationId: convId,
 		appDataDir: tmpDir,
@@ -504,18 +505,20 @@ test('large multi-tool step (>100KB encrypted) streams cleanly across WsPeer fra
 		csrfToken: 'tok',
 		trackState: false
 	})
+	await host.connect()
 	let resolveSnap
 	const snapDone = new Promise(resolve => { resolveSnap = resolve })
 	let received = null
-	const guest = await connectGuest({
+	const guest = new Guest({
 		target: host.webUrl,
 		interactive: false,
-		output: new PassThrough(),
-		onSnapshot (snap) {
-			received = snap.steps[0]
-			resolveSnap()
-		}
+		output: { write () {} }
 	})
+	guest.addEventListener('snapshot', ev => {
+		received = ev.detail.steps[0]
+		resolveSnap()
+	})
+	await guest.connect()
 	await snapDone
 	assert.ok(received)
 	assert.equal(received.tools.length, 4)
