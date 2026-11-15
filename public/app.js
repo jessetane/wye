@@ -8,7 +8,11 @@ const stopBtn = document.getElementById('stop')
 const room = decodeURIComponent(location.pathname.split('/').filter(Boolean)[0] || '')
 const params = new URLSearchParams(location.search)
 const guestName = params.get('name') || 'web'
+const stepsByIndex = new Map()
 const stepNodes = new Map()
+const openTools = new Set()
+const openThoughts = new Set()
+let expandAll = false
 let ws = null
 let cryptoKey = null
 let cachedMeta = null
@@ -26,7 +30,129 @@ function appendNotice (text) {
 	if (stick) logEl.scrollTop = logEl.scrollHeight
 }
 
+function appendInlineMarkdown (parent, line) {
+	const tokenRe = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g
+	let last = 0
+	let match
+	while ((match = tokenRe.exec(line)) !== null) {
+		if (match.index > last) {
+			parent.appendChild(document.createTextNode(line.slice(last, match.index)))
+		}
+		const raw = match[0]
+		if (raw.startsWith('`')) {
+			const code = document.createElement('code')
+			code.textContent = raw.slice(1, -1)
+			parent.appendChild(code)
+		} else {
+			const strong = document.createElement('strong')
+			strong.textContent = raw.slice(2, -2)
+			parent.appendChild(strong)
+		}
+		last = tokenRe.lastIndex
+	}
+	if (last < line.length) {
+		parent.appendChild(document.createTextNode(line.slice(last)))
+	}
+}
+
+function renderFormattedText (text) {
+	const wrap = document.createElement('div')
+	wrap.className = 'text'
+	const lines = text.split('\n')
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]
+		const headingMatch = /^(#{1,4})\s+(.*)$/.exec(line)
+		if (headingMatch) {
+			const h = document.createElement('div')
+			h.className = 'heading'
+			appendInlineMarkdown(h, headingMatch[2])
+			wrap.appendChild(h)
+		} else {
+			appendInlineMarkdown(wrap, line)
+			if (i < lines.length - 1) wrap.appendChild(document.createTextNode('\n'))
+		}
+	}
+	return wrap
+}
+
+function renderThinking (step) {
+	const details = document.createElement('details')
+	details.className = 'thinking'
+	const isOpen = expandAll || openThoughts.has(step.index)
+	details.open = isOpen
+	const summary = document.createElement('summary')
+	const label = step.thinkingTokens ? `Thought · ${step.thinkingTokens} tokens` : 'Thought'
+	summary.textContent = label
+	const preview = document.createElement('div')
+	preview.className = 'thinking-preview'
+	preview.textContent = step.thinking.replace(/\s+/g, ' ')
+	const full = document.createElement('pre')
+	full.className = 'thinking-body'
+	full.textContent = step.thinking
+	details.appendChild(summary)
+	details.appendChild(preview)
+	details.appendChild(full)
+	details.addEventListener('toggle', () => {
+		if (details.open) openThoughts.add(step.index)
+		else openThoughts.delete(step.index)
+	})
+	return details
+}
+
+function renderTool (step, tool, toolIdx, isLast) {
+	const toolKey = `${step.index}:${toolIdx}`
+	const details = document.createElement('details')
+	const status = tool.status || 'done'
+	details.className = `tool status-${status}`
+	const isOpen = expandAll || openTools.has(toolKey)
+	details.open = isOpen
+	const summary = document.createElement('summary')
+	const dot = document.createElement('span')
+	dot.className = 'dot'
+	dot.textContent = '● '
+	const label = document.createElement('b')
+	label.textContent = tool.label
+	summary.appendChild(dot)
+	summary.appendChild(label)
+	if (tool.detail) {
+		const detailSpan = document.createElement('span')
+		detailSpan.className = 'detail'
+		detailSpan.textContent = `(${tool.detail})`
+		summary.appendChild(detailSpan)
+	}
+	let hintSpan = null
+	if (isLast) {
+		hintSpan = document.createElement('span')
+		hintSpan.className = 'hint'
+		hintSpan.textContent = details.open ? ' (ctrl+o to collapse)' : ' (ctrl+o to expand)'
+		summary.appendChild(hintSpan)
+	}
+	details.appendChild(summary)
+	const body = document.createElement('div')
+	body.className = 'tool-body'
+	if (tool.input) {
+		const inPre = document.createElement('pre')
+		inPre.className = 'tool-in'
+		inPre.textContent = tool.input
+		body.appendChild(inPre)
+	}
+	const outPre = document.createElement('pre')
+	outPre.className = 'tool-out'
+	outPre.textContent = tool.output || (status === 'running' ? 'Running…' : '(no output)')
+	body.appendChild(outPre)
+	details.appendChild(body)
+	details.addEventListener('toggle', () => {
+		if (details.open) openTools.add(toolKey)
+		else openTools.delete(toolKey)
+		if (hintSpan) {
+			hintSpan.textContent = details.open ? ' (ctrl+o to collapse)' : ' (ctrl+o to expand)'
+		}
+	})
+	return details
+}
+
 function renderStep (step) {
+	stepsByIndex.set(step.index, step)
 	const stick = nearBottom()
 	let node = stepNodes.get(step.index)
 	if (!node) {
@@ -38,33 +164,45 @@ function renderStep (step) {
 	node.textContent = ''
 	if (step.role === 'user') {
 		node.className = 'user'
-		node.textContent = `> ${step.text}`
+		const prefix = document.createElement('span')
+		prefix.className = 'prompt-prefix'
+		prefix.textContent = '[> '
+		const body = document.createElement('span')
+		body.className = 'prompt-text'
+		body.textContent = step.text
+		node.appendChild(prefix)
+		node.appendChild(body)
 	} else if (step.role === 'assistant') {
 		node.className = 'assistant'
-		if (step.text) {
-			const body = document.createElement('div')
-			body.className = 'text'
-			body.textContent = step.text
-			node.appendChild(body)
+		if (step.thinking) {
+			node.appendChild(renderThinking(step))
 		}
-		for (const t of step.tools || []) {
-			const row = document.createElement('div')
-			row.className = 'tool'
-			const dot = document.createElement('span')
-			dot.className = 'dot'
-			dot.textContent = '● '
-			const label = document.createElement('b')
-			label.textContent = t.label
-			row.appendChild(dot)
-			row.appendChild(label)
-			if (t.detail) row.appendChild(document.createTextNode(`(${t.detail})`))
-			node.appendChild(row)
+		const tools = step.tools || []
+		if (tools.length > 0) {
+			const group = document.createElement('div')
+			group.className = 'tool-group'
+			for (let i = 0; i < tools.length; i++) {
+				group.appendChild(renderTool(step, tools[i], i, i === tools.length - 1))
+			}
+			node.appendChild(group)
+		}
+		if (step.text) {
+			node.appendChild(renderFormattedText(step.text))
 		}
 	} else if (step.role === 'error') {
 		node.className = 'error'
 		node.textContent = `✖ ${step.text}`
 	}
 	if (stick) logEl.scrollTop = logEl.scrollHeight
+}
+
+function toggleExpandAll () {
+	expandAll = !expandAll
+	openTools.clear()
+	openThoughts.clear()
+	for (const step of stepsByIndex.values()) {
+		renderStep(step)
+	}
 }
 
 function updateHeader (meta, members) {
@@ -145,6 +283,13 @@ inputEl.addEventListener('keydown', event => {
 	if (event.key === 'Enter' && !event.shiftKey) {
 		event.preventDefault()
 		submitPrompt()
+	}
+})
+
+window.addEventListener('keydown', event => {
+	if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'o') {
+		event.preventDefault()
+		toggleExpandAll()
 	}
 })
 

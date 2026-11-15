@@ -7,39 +7,97 @@ import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import { PassThrough } from 'node:stream'
-import { parseAntigravityStep } from '../lib/harnesses/antigravity.js'
+import { createAntigravityStepParser } from '../lib/harnesses/antigravity.js'
 import { createClaudeStepParser, slugifyClaudeProject } from '../lib/harnesses/claude.js'
 import { createRelay } from '../lib/relay.js'
 import { connectHost, listHosts } from '../lib/host.js'
-import { connectGuest } from '../lib/join.js'
+import { connectGuest, formatStep } from '../lib/join.js'
 
-test('parseAntigravityStep normalizes user, assistant, and error steps', () => {
-	const userStep = parseAntigravityStep(JSON.stringify({
+test('createAntigravityStepParser formats agy-style tools and correlates GENERIC + background outputs', () => {
+	const parse = createAntigravityStepParser({ homeDir: '/Users/jesse' })
+	const userStep = parse(JSON.stringify({
 		step_index: 0,
 		source: 'USER_EXPLICIT',
 		type: 'USER_INPUT',
 		status: 'DONE',
 		created_at: '2026-11-13T20:00:00Z',
-		content: '<USER_REQUEST>\ninitial desktop question\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ntime\n</ADDITIONAL_METADATA>'
+		content: '<USER_REQUEST>\nwhat is the latest on topical?\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ntime\n</ADDITIONAL_METADATA>'
 	}))
 	assert.equal(userStep.role, 'user')
-	assert.equal(userStep.text, 'initial desktop question')
-	const modelStep = parseAntigravityStep(JSON.stringify({
+	assert.equal(userStep.text, 'what is the latest on topical?')
+	const modelStep = parse(JSON.stringify({
 		step_index: 3,
 		source: 'MODEL',
 		type: 'PLANNER_RESPONSE',
 		status: 'DONE',
 		created_at: '2026-11-13T20:01:05Z',
+		thinking: 'Checking the schema instructions for topical.',
+		output_tokens: 127,
 		content: 'Here is the **answer**.',
-		tool_calls: [{ name: 'read_file', args: { Path: '/tmp/demo.js' } }]
+		tool_calls: [
+			{ name: 'read_file', args: { Path: '/Users/jesse/.gemini/antigravity-cli/mcp/topical/http_api.json' } },
+			{ name: 'call_mcp_tool', args: { ServerName: 'topical', ToolName: 'http_api', Arguments: { method: 'GET', url: '/api/topics' } } },
+			{ name: 'run_command', args: { CommandLine: 'python3 -c \'\nprint(1)\n\'' } }
+		]
 	}))
 	assert.equal(modelStep.role, 'assistant')
-	assert.equal(modelStep.text, 'Here is the **answer**.')
-	assert.deepEqual(modelStep.tools, [{ label: 'Read', detail: '/tmp/demo.js' }])
+	assert.equal(modelStep.thinking, 'Checking the schema instructions for topical.')
+	assert.equal(modelStep.thinkingTokens, 127)
+	assert.equal(modelStep.tools[0].label, 'Read')
+	assert.equal(modelStep.tools[0].detail, '~/.gemini/antigravity-cli/mcp/topical/http_api.json')
+	assert.equal(modelStep.tools[0].status, 'running')
+	assert.equal(modelStep.tools[1].label, 'topical/http_api')
+	assert.equal(modelStep.tools[1].detail, '{"method":"GET","url":"/api/topics"}')
+	assert.equal(modelStep.tools[2].label, 'Bash')
+	assert.equal(modelStep.tools[2].detail, 'python3 -c \'')
+	assert.match(modelStep.tools[2].input, /print\(1\)/)
+	const afterRead = parse(JSON.stringify({
+		step_index: 4,
+		source: 'MODEL',
+		type: 'GENERIC',
+		status: 'DONE',
+		content: 'Created At: 2026-11-13T20:01:05Z\nCompleted At: 2026-11-13T20:01:05Z\n{"name":"http_api"}'
+	}))
+	assert.equal(afterRead.index, 3)
+	assert.equal(afterRead.tools[0].status, 'done')
+	assert.equal(afterRead.tools[0].output, '{"name":"http_api"}')
+	const afterMcpErr = parse(JSON.stringify({
+		step_index: 5,
+		source: 'MODEL',
+		type: 'GENERIC',
+		status: 'ERROR',
+		error: 'MCP 500 Internal Error',
+		content: 'Created At: 2026-11-13T20:01:06Z\n'
+	}))
+	assert.equal(afterMcpErr.tools[1].status, 'error')
+	assert.match(afterMcpErr.tools[1].output, /MCP 500 Internal Error/)
+	const afterBgStart = parse(JSON.stringify({
+		step_index: 6,
+		source: 'MODEL',
+		type: 'GENERIC',
+		status: 'RUNNING',
+		content: 'Created At: 2026-11-13T20:01:06Z\nTool is running as a background task with task id: conv/task-6'
+	}))
+	assert.equal(afterBgStart.tools[2].status, 'running')
+	const afterBgDone = parse(JSON.stringify({
+		step_index: 7,
+		source: 'SYSTEM',
+		type: 'SYSTEM_MESSAGE',
+		status: 'DONE',
+		content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-13T20:01:08Z sender=conv/task-6 priority=HIGH content=Task id "conv/task-6" finished with result:\nCommand exited with code 0.\n\nCommand output:\n1\n</SYSTEM_MESSAGE>'
+	}))
+	assert.equal(afterBgDone.tools[2].status, 'done')
+	assert.match(afterBgDone.tools[2].output, /Command output:\n1/)
+	const collapsed = formatStep(afterBgDone, null, { expanded: false })
+	assert.match(collapsed, /\(ctrl\+o to expand\)/)
+	assert.match(collapsed, /MCP 500 Internal Error/)
+	const expanded = formatStep(afterBgDone, null, { expanded: true })
+	assert.match(expanded, /\(ctrl\+o to collapse\)/)
+	assert.match(expanded, /Command output:/)
 })
 
-test('createClaudeStepParser coalesces assistant blocks, filters tool results, and unwraps peer prompts', () => {
-	const parse = createClaudeStepParser()
+test('createClaudeStepParser coalesces assistant blocks, attaches tool_result outputs, and unwraps peer prompts', () => {
+	const parse = createClaudeStepParser({ homeDir: '/Users/jesse' })
 	assert.equal(parse(JSON.stringify({ type: 'mode', mode: 'normal' })), null)
 	const u1 = parse(JSON.stringify({
 		type: 'user',
@@ -50,11 +108,13 @@ test('createClaudeStepParser coalesces assistant blocks, filters tool results, a
 	assert.equal(u1.index, 0)
 	assert.equal(u1.role, 'user')
 	assert.equal(u1.text, 'Explain this repo')
-	assert.equal(parse(JSON.stringify({
+	const aThink = parse(JSON.stringify({
 		type: 'assistant',
 		uuid: 'a-think',
 		message: { id: 'msg-1', role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }] }
-	})), null)
+	}))
+	assert.equal(aThink.index, 1)
+	assert.equal(aThink.thinking, 'hmm')
 	const a1 = parse(JSON.stringify({
 		type: 'assistant',
 		uuid: 'a-text',
@@ -66,17 +126,30 @@ test('createClaudeStepParser coalesces assistant blocks, filters tool results, a
 	const a2 = parse(JSON.stringify({
 		type: 'assistant',
 		uuid: 'a-tool',
-		message: { id: 'msg-1', role: 'assistant', content: [{ type: 'tool_use', id: 't-1', name: 'Read', input: { file_path: '/src/index.js' } }] }
+		message: {
+			id: 'msg-1',
+			role: 'assistant',
+			content: [
+				{ type: 'tool_use', id: 't-1', name: 'Read', input: { file_path: '/Users/jesse/src/index.js' } },
+				{ type: 'tool_use', id: 't-2', name: 'mcp__chrome-tab__eval', input: { code: 'document.title' } }
+			]
+		}
 	}))
 	assert.equal(a2.index, 1)
-	assert.equal(a2.text, 'Checking files.')
-	assert.deepEqual(a2.tools, [{ label: 'Read', detail: '/src/index.js' }])
-	assert.equal(parse(JSON.stringify({
+	assert.equal(a2.tools[0].label, 'Read')
+	assert.equal(a2.tools[0].detail, '~/src/index.js')
+	assert.equal(a2.tools[0].status, 'running')
+	assert.equal(a2.tools[1].label, 'chrome-tab/eval')
+	assert.equal(a2.tools[1].detail, '{"code":"document.title"}')
+	const aAfterRes = parse(JSON.stringify({
 		type: 'user',
 		uuid: 'u-toolres',
-		toolUseResult: true,
-		message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't-1', content: 'ok' }] }
-	})), null)
+		toolUseResult: { stdout: 'export default 42' },
+		message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't-1', content: 'export default 42' }] }
+	}))
+	assert.equal(aAfterRes.index, 1)
+	assert.equal(aAfterRes.tools[0].status, 'done')
+	assert.equal(aAfterRes.tools[0].output, 'export default 42')
 	const peerPrompt = parse(JSON.stringify({
 		type: 'user',
 		uuid: 'u-peer',
@@ -222,8 +295,8 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	assert.equal(receivedRpc[0].payload.items[0].text, 'hey partner, jumping in!')
 	assert.equal(receivedRpc[1].url, '/exa.language_server_pb.LanguageServerService/CancelCascadeInvocation')
 	assert.deepEqual(receivedRpc[1].payload, { cascadeId: convId, killBackgroundTasks: false })
-	assert.match(renderedOutput, / > already chatting in desktop /)
-	assert.match(renderedOutput, / > hey partner, jumping in! /)
+	assert.match(renderedOutput, /already chatting in desktop/)
+	assert.match(renderedOutput, /hey partner, jumping in!/)
 	await assert.rejects(async () => {
 		const wrongKeyUrl = `${hostSession.webUrl.split('#')[0]}#AAAAAAAAAAAAAAAAAAAAAA`
 		let decryptErr
@@ -388,4 +461,63 @@ test('end-to-end Claude Code host discovers session, streams JSONL, and injects 
 	await relay.close()
 	await new Promise(resolve => udsServer.close(resolve))
 	fs.rmSync(shortTmp, { recursive: true, force: true })
+})
+
+test('large multi-tool step (>100KB encrypted) streams cleanly across WsPeer fragmentation', async () => {
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wye-large-'))
+	const convId = '99999999-2222-3333-4444-555555555555'
+	const logDir = path.join(tmpDir, 'brain', convId, '.system_generated', 'logs')
+	fs.mkdirSync(logDir, { recursive: true })
+	const transcriptPath = path.join(logDir, 'transcript_full.jsonl')
+	const bigChunk = 'x'.repeat(28000)
+	fs.writeFileSync(transcriptPath, [
+		JSON.stringify({
+			step_index: 1,
+			source: 'MODEL',
+			type: 'PLANNER_RESPONSE',
+			status: 'DONE',
+			content: 'Done inspecting.',
+			tool_calls: [
+				{ name: 'call_mcp_tool', args: { ServerName: 'topical', ToolName: 'http_api', Arguments: { url: '/1' } } },
+				{ name: 'call_mcp_tool', args: { ServerName: 'topical', ToolName: 'http_api', Arguments: { url: '/2' } } },
+				{ name: 'call_mcp_tool', args: { ServerName: 'topical', ToolName: 'http_api', Arguments: { url: '/3' } } },
+				{ name: 'call_mcp_tool', args: { ServerName: 'topical', ToolName: 'http_api', Arguments: { url: '/4' } } }
+			]
+		}),
+		JSON.stringify({ step_index: 2, type: 'GENERIC', status: 'DONE', content: bigChunk }),
+		JSON.stringify({ step_index: 3, type: 'GENERIC', status: 'DONE', content: bigChunk }),
+		JSON.stringify({ step_index: 4, type: 'GENERIC', status: 'DONE', content: bigChunk }),
+		JSON.stringify({ step_index: 5, type: 'GENERIC', status: 'DONE', content: bigChunk })
+	].join('\n') + '\n')
+	const relay = createRelay()
+	const addr = await relay.open(0, '127.0.0.1')
+	const host = await connectHost({
+		relayUrl: `ws://127.0.0.1:${addr.port}`,
+		conversationId: convId,
+		appDataDir: tmpDir,
+		lsAddress: '127.0.0.1:9',
+		csrfToken: 'tok',
+		trackState: false
+	})
+	let resolveSnap
+	const snapDone = new Promise(resolve => { resolveSnap = resolve })
+	let received = null
+	const guest = await connectGuest({
+		target: host.webUrl,
+		interactive: false,
+		output: new PassThrough(),
+		onSnapshot (snap) {
+			received = snap.steps[0]
+			resolveSnap()
+		}
+	})
+	await snapDone
+	assert.ok(received)
+	assert.equal(received.tools.length, 4)
+	assert.equal(received.tools[3].status, 'done')
+	assert.equal(received.tools[3].output.length, 28000)
+	guest.disconnect()
+	host.disconnect()
+	await relay.close()
+	fs.rmSync(tmpDir, { recursive: true, force: true })
 })
