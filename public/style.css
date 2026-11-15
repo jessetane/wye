@@ -263,8 +263,13 @@ a:hover {
 	padding: 1.25rem 0.75rem 2rem;
 }
 
+#index > a {
+	display: block;
+	margin-bottom: 1.25rem;
+}
+
 #readme {
-	margin: 0 0 1.25rem;
+	margin: 0;
 	font: inherit;
 	white-space: pre-wrap;
 	word-break: break-word;
