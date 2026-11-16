@@ -45,3 +45,10 @@ export async function decryptJson (cryptoKey, box) {
 	const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ciphertext)
 	return JSON.parse(new TextDecoder().decode(plaintext))
 }
+
+export async function decryptRoster (cryptoKey, members) {
+	return await Promise.all((members || []).map(async m => ({
+		role: m.role,
+		name: await decryptJson(cryptoKey, m.nameBox)
+	})))
+}

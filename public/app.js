@@ -1,4 +1,4 @@
-import { importKey, encryptJson, decryptJson } from '/crypto.js'
+import { importKey, encryptJson, decryptJson, decryptRoster } from '/crypto.js'
 
 const statusEl = document.getElementById('status')
 const logEl = document.getElementById('log')
@@ -215,20 +215,12 @@ function updateHeader (meta, members) {
 	statusEl.textContent = parts.join(' · ')
 }
 
-async function decryptRoster (members) {
-	const out = []
-	for (const m of members || []) {
-		const name = m.nameBox ? await decryptJson(cryptoKey, m.nameBox) : 'unknown'
-		out.push({ role: m.role, name })
-	}
-	return out
-}
-
 function connect () {
 	const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
 	ws = new WebSocket(`${proto}//${location.host}/ws/${encodeURIComponent(room)}?role=guest`)
 	const inbox = []
 	let draining = false
+	let shouldReconnect = true
 	async function drainInbox () {
 		if (draining) return
 		draining = true
@@ -239,7 +231,7 @@ function connect () {
 					const msg = JSON.parse(String(raw))
 					if (msg.type === 'snapshot') {
 						const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
-						const members = await decryptRoster(msg.members)
+						const members = await decryptRoster(cryptoKey, msg.members)
 						updateHeader(meta, members)
 						for (const item of msg.steps || []) {
 							const step = await decryptJson(cryptoKey, item.box)
@@ -251,7 +243,7 @@ function connect () {
 						renderStep(step)
 					} else if (msg.type === 'presence') {
 						const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
-						const members = await decryptRoster(msg.members)
+						const members = await decryptRoster(cryptoKey, msg.members)
 						const peerName = msg.nameBox ? await decryptJson(cryptoKey, msg.nameBox) : 'peer'
 						updateHeader(meta, members)
 						appendNotice(`${peerName} ${msg.event.replaceAll('_', ' ')}`)
@@ -259,7 +251,10 @@ function connect () {
 						appendNotice(`error: ${msg.message}`)
 					}
 				} catch (err) {
+					shouldReconnect = false
 					appendNotice(`decryption failed (check #key in URL): ${err.message}`)
+					ws.close()
+					return
 				}
 			}
 		} finally {
@@ -275,6 +270,10 @@ function connect () {
 		drainInbox()
 	})
 	ws.addEventListener('close', () => {
+		if (!shouldReconnect) {
+			statusEl.textContent = `room ${room} · key mismatch`
+			return
+		}
 		statusEl.textContent = `room ${room} · reconnecting...`
 		setTimeout(connect, 1500)
 	})

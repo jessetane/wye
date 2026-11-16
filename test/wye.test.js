@@ -576,3 +576,88 @@ test('resolveHarness reports actionable errors for missing session environments'
 	fs.rmSync(emptyDir, { recursive: true, force: true })
 })
 
+test('relay clears old-epoch state on host restart', async () => {
+	const relay = new Relay()
+	const addr = await relay.open(0, '127.0.0.1')
+	const relayUrl = `ws://127.0.0.1:${addr.port}`
+	const makeStubHost = (room, steps) => new Host({
+		relayUrl,
+		room,
+		trackState: false,
+		harness: {
+			type: 'antigravity',
+			conversationId: room,
+			workspace: '/tmp/ws',
+			transcriptPath: '',
+			watch (onStep) {
+				for (const s of steps) onStep(s)
+				return () => {}
+			},
+			async send () {},
+			async cancel () {}
+		}
+	})
+	const host1 = makeStubHost('shared-room', [
+		{ index: 0, role: 'user', text: 'old turn 0', status: 'DONE' },
+		{ index: 1, role: 'assistant', text: 'old turn 1', tools: [], status: 'DONE' }
+	])
+	await host1.connect()
+	const oldGuestClosed = new Promise(resolve => {
+		const oldGuest = new Guest({ target: host1.webUrl, name: 'old', interactive: false, output: { write () {} } })
+		oldGuest.addEventListener('close', () => resolve(oldGuest))
+		oldGuest.connect()
+	})
+	await new Promise(resolve => setTimeout(resolve, 40))
+	host1.disconnect()
+	const host2 = makeStubHost('shared-room', [
+		{ index: 0, role: 'user', text: 'new turn 0', status: 'DONE' }
+	])
+	await host2.connect()
+	await oldGuestClosed
+	let snapshot = null
+	const guest2 = new Guest({ target: host2.webUrl, name: 'alice', interactive: false, output: { write () {} } })
+	const snapDone = new Promise(resolve => {
+		guest2.addEventListener('snapshot', ev => {
+			snapshot = ev.detail
+			resolve()
+		})
+	})
+	await guest2.connect()
+	await snapDone
+	assert.equal(snapshot.steps.length, 1)
+	assert.equal(snapshot.steps[0].text, 'new turn 0')
+	assert.deepEqual(snapshot.members.map(m => m.name), [os.userInfo().username, 'alice'])
+	guest2.disconnect()
+	host2.disconnect()
+	await relay.close()
+})
+
+test('relay reaps unresponsive peers on heartbeat and frees rooms', async () => {
+	const relay = new Relay({ pingIntervalMs: 30 })
+	const addr = await relay.open(0, '127.0.0.1')
+	const rawSock = net.createConnection({ host: '127.0.0.1', port: addr.port })
+	await new Promise(resolve => {
+		rawSock.on('connect', () => {
+			rawSock.write([
+				'GET /ws/zombie-room?role=guest HTTP/1.1',
+				`Host: 127.0.0.1:${addr.port}`,
+				'Upgrade: websocket',
+				'Connection: Upgrade',
+				'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+				'Sec-WebSocket-Version: 13',
+				'\r\n'
+			].join('\r\n'))
+		})
+		rawSock.once('data', resolve)
+	})
+	assert.equal(relay.rooms.size, 1)
+	await new Promise(resolve => { rawSock.on('close', resolve) })
+	assert.equal(relay.rooms.size, 0)
+	const badWs = new WebSocket(`ws://127.0.0.1:${addr.port}/ws/malformed-room?role=guest`)
+	await new Promise(resolve => { badWs.onopen = resolve })
+	badWs.send('{not json')
+	await new Promise(resolve => { badWs.onclose = resolve })
+	await new Promise(resolve => setTimeout(resolve, 20))
+	assert.equal(relay.rooms.size, 0)
+	await relay.close()
+})
