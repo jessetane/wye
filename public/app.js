@@ -21,6 +21,7 @@ let ws = null
 let cryptoKey = null
 let cachedMeta = null
 let hasSession = false
+let maxStepIndex = -1
 
 function nearBottom () {
 	return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 64
@@ -187,6 +188,19 @@ function updateWaitHints () {
 
 function renderStep (step) {
 	stepsByIndex.set(step.index, step)
+	if (step.index > maxStepIndex) {
+		maxStepIndex = step.index
+		for (const key of [...runningSince.keys()]) {
+			if (Number(key.slice(0, key.indexOf(':'))) < maxStepIndex) {
+				runningSince.delete(key)
+				const el = waitNodes.get(key)
+				if (el) {
+					el.hidden = true
+					el.textContent = ''
+				}
+			}
+		}
+	}
 	const stick = nearBottom()
 	for (const key of waitNodes.keys()) {
 		if (key.startsWith(`${step.index}:`)) waitNodes.delete(key)
@@ -223,7 +237,7 @@ function renderStep (step) {
 				const toolKey = `${step.index}:${i}`
 				const status = tool.status || 'done'
 				group.appendChild(renderTool(step, tool, i, i === tools.length - 1))
-				if (status === 'running') {
+				if (status === 'running' && step.index === maxStepIndex) {
 					if (!runningSince.has(toolKey)) runningSince.set(toolKey, Date.now())
 					const wait = document.createElement('div')
 					wait.className = 'wait-hint'

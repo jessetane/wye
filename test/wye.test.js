@@ -790,3 +790,55 @@ test('host and guest report clear guidance when #key mismatches or rotates', asy
 	activeGuest.disconnect()
 	host2.disconnect()
 })
+
+test('guest does not show wait hint for running background tool once newer step arrives', async t => {
+	const relay = new Relay()
+	t.after(() => relay.close())
+	const addr = await relay.open(0, '127.0.0.1')
+	const relayUrl = `ws://127.0.0.1:${addr.port}`
+	const host = new Host({
+		relayUrl,
+		room: 'bg-tool-room',
+		reconnect: false,
+		trackState: false,
+		harness: {
+			type: 'antigravity',
+			conversationId: 'bg-tool-room',
+			workspace: '/tmp/ws',
+			transcriptPath: '',
+			watch (onStep) {
+				onStep({
+					index: 0,
+					role: 'assistant',
+					text: '',
+					tools: [{ label: 'Bash', detail: 'wye host', status: 'running' }],
+					status: 'DONE'
+				})
+				onStep({
+					index: 1,
+					role: 'assistant',
+					text: 'Live share started.',
+					tools: [],
+					status: 'DONE'
+				})
+				return () => {}
+			},
+			async send () {},
+			async cancel () {}
+		}
+	})
+	await host.connect()
+	let output = ''
+	const guest = new Guest({
+		target: host.webUrl,
+		name: 'alice',
+		interactive: false,
+		waitHintMs: 30,
+		output: { write (s) { output += s } }
+	})
+	await guest.connect()
+	await new Promise(resolve => setTimeout(resolve, 70))
+	assert.doesNotMatch(output, /waiting on Bash/)
+	guest.disconnect()
+	host.disconnect()
+})
