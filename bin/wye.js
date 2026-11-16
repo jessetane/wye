@@ -87,7 +87,6 @@ if (cmd === 'relay') {
 	console.log(`room: ${host.room}`)
 	console.log(`web:  ${host.webUrl}`)
 	console.log(`join: wye join '${host.webUrl}'`)
-	console.log(`stop: wye stop ${host.room}`)
 	function shutdown () {
 		host.disconnect()
 		process.exit(0)

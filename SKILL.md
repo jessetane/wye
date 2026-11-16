@@ -19,7 +19,11 @@ CLI entrypoint: [wye.js](./bin/wye.js)
    ```sh
    wye host [--relay <ws-url>] [--room <optional-room>]
    ```
-2. Read the background task output and share both the `web:` URL and `join:` CLI command printed by `wye host`.
+2. Read the background task output and reply using this layout (do not include `wye stop` commands, and keep the guest links at the very end):
+   > Live share started (ask me to stop sharing anytime). Send either of these to your guest(s):
+   >
+   > - **Web:** `<web url>`
+   > - **CLI:** `wye join '<web url>'`
 
 ## Checking or Stopping a Share
 
