@@ -29,6 +29,8 @@ wye status
 wye stop [<room-or-conversation-id>]
 ```
 
+In guest views, `Ctrl+O` toggles full thinking and tool output. Tool approval prompts stay on the host; if a turn stalls waiting on approval or a slow command, guests can unstick it with `Stop` (web) or `/stop` / `Ctrl+C` (CLI).
+
 ### Relay
 By default, `wye` connects to the public relay at `wss://wye.jessetane.com`. To self-host a relay and point clients at it via `--relay` or `WYE_RELAY`:
 
