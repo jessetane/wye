@@ -5,8 +5,10 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
+import { spawnSync } from 'node:child_process'
 import * as antigravity from '../lib/harnesses/antigravity.js'
 import * as claude from '../lib/harnesses/claude.js'
+import { resolveHarness } from '../lib/harnesses/index.js'
 import { Relay } from '../lib/relay.js'
 import { Host, listHosts } from '../lib/host.js'
 import { Guest, formatStep } from '../lib/join.js'
@@ -529,3 +531,48 @@ test('large multi-tool step (>100KB encrypted) streams cleanly across WsPeer fra
 	await relay.close()
 	fs.rmSync(tmpDir, { recursive: true, force: true })
 })
+
+test('resolveHarness reports actionable errors for missing session environments', async () => {
+	const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wye-empty-'))
+	await assert.rejects(
+		() => resolveHarness({ env: { CLAUDE_CONFIG_DIR: emptyDir }, workspace: emptyDir }),
+		err => {
+			assert.match(err.message, /Antigravity or Claude Code/)
+			assert.match(err.message, /`!` bash mode/)
+			assert.match(err.message, /--session/)
+			return true
+		}
+	)
+	await assert.rejects(
+		() => resolveHarness({ env: {}, harness: 'antigravity' }),
+		err => {
+			assert.match(err.message, /ANTIGRAVITY_CONVERSATION_ID, ANTIGRAVITY_APP_DATA_DIR, ANTIGRAVITY_LS_ADDRESS, ANTIGRAVITY_CSRF_TOKEN/)
+			assert.match(err.message, /agent tool calls/)
+			return true
+		}
+	)
+	await assert.rejects(
+		() => resolveHarness({ env: { ANTIGRAVITY_CONVERSATION_ID: 'conv-1' } }),
+		err => {
+			assert.match(err.message, /Missing Antigravity session environment \(ANTIGRAVITY_APP_DATA_DIR, ANTIGRAVITY_LS_ADDRESS, ANTIGRAVITY_CSRF_TOKEN\)/)
+			return true
+		}
+	)
+	await assert.rejects(
+		() => resolveHarness({ env: { CLAUDE_CONFIG_DIR: emptyDir }, harness: 'claude', workspace: emptyDir }),
+		err => {
+			assert.match(err.message, /Could not locate an active Claude Code session/)
+			return true
+		}
+	)
+	const cliRes = spawnSync(process.execPath, [path.resolve('bin/wye.js'), 'host'], {
+		cwd: emptyDir,
+		env: { PATH: process.env.PATH, HOME: emptyDir },
+		encoding: 'utf8'
+	})
+	assert.equal(cliRes.status, 1)
+	assert.match(cliRes.stderr, /Could not detect an active Antigravity or Claude Code session/)
+	assert.doesNotMatch(cliRes.stderr, /\n\s+at /)
+	fs.rmSync(emptyDir, { recursive: true, force: true })
+})
+

@@ -78,7 +78,12 @@ if (cmd === 'relay') {
 	host.addEventListener('close', () => {
 		process.exit(0)
 	})
-	await host.connect()
+	try {
+		await host.connect()
+	} catch (err) {
+		console.error(err.message)
+		process.exit(1)
+	}
 	console.log(`room: ${host.room}`)
 	console.log(`web:  ${host.webUrl}`)
 	console.log(`join: wye join '${host.webUrl}'`)
