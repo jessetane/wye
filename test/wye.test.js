@@ -717,3 +717,76 @@ test('guest shows wait hint on stalled running tool and host cancel settles runn
 	host.disconnect()
 	await relay.close()
 })
+
+test('host and guest report clear guidance when #key mismatches or rotates', async t => {
+	const relay = new Relay()
+	t.after(() => relay.close())
+	const addr = await relay.open(0, '127.0.0.1')
+	const relayUrl = `ws://127.0.0.1:${addr.port}`
+	const makeStubHost = room => new Host({
+		relayUrl,
+		room,
+		reconnect: false,
+		trackState: false,
+		harness: {
+			type: 'antigravity',
+			conversationId: room,
+			workspace: '/tmp/ws',
+			transcriptPath: '',
+			watch () { return () => {} },
+			async send () {},
+			async cancel () {}
+		}
+	})
+	const host1 = makeStubHost('key-rotate-room')
+	await host1.connect()
+	host1.disconnect()
+	const host2 = makeStubHost('key-rotate-room')
+	const host2Err = new Promise(resolve => {
+		host2.addEventListener('error', ev => resolve(ev.detail.message), { once: true })
+	})
+	await host2.connect()
+	let firstOutput = ''
+	const badGuest = new Guest({
+		target: host1.webUrl,
+		name: 'stale-guest',
+		interactive: false,
+		output: { write (s) { firstOutput += s } }
+	})
+	const badErr = new Promise(resolve => {
+		badGuest.addEventListener('error', ev => resolve(ev.detail))
+	})
+	await badGuest.connect()
+	const [err, hostErrMsg] = await Promise.all([badErr, host2Err])
+	assert.equal(err.name, 'KeyMismatchError')
+	assert.match(firstOutput, /Decryption error \(check room #key\): Mismatched room #key\./)
+	assert.match(hostErrMsg, /Ignored guest message with mismatched #key/)
+	badGuest.disconnect()
+	let activeOutput = ''
+	const activeGuest = new Guest({
+		target: host2.webUrl,
+		name: 'bob',
+		interactive: false,
+		output: { write (s) { activeOutput += s } }
+	})
+	const snapped = new Promise(resolve => {
+		activeGuest.addEventListener('snapshot', resolve, { once: true })
+	})
+	await activeGuest.connect()
+	await snapped
+	const otherGuest = new Guest({
+		target: host1.webUrl,
+		name: 'eve',
+		interactive: false,
+		output: { write () {} }
+	})
+	const activeErr = new Promise(resolve => {
+		activeGuest.addEventListener('error', ev => resolve(ev.detail))
+	})
+	await otherGuest.connect()
+	await activeErr
+	assert.match(activeOutput, /Host restarted the share with a new #key — rejoin with the updated URL/)
+	otherGuest.disconnect()
+	activeGuest.disconnect()
+	host2.disconnect()
+})

@@ -42,7 +42,17 @@ export async function decryptJson (cryptoKey, box) {
 	if (combined.byteLength < 28) throw new Error('Malformed encrypted payload.')
 	const iv = combined.subarray(0, 12)
 	const ciphertext = combined.subarray(12)
-	const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ciphertext)
+	let plaintext
+	try {
+		plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ciphertext)
+	} catch (err) {
+		if (err && err.name === 'OperationError') {
+			const mismatch = new Error('Mismatched room #key.')
+			mismatch.name = 'KeyMismatchError'
+			throw mismatch
+		}
+		throw err
+	}
 	return JSON.parse(new TextDecoder().decode(plaintext))
 }
 

@@ -20,6 +20,7 @@ let expandAll = false
 let ws = null
 let cryptoKey = null
 let cachedMeta = null
+let hasSession = false
 
 function nearBottom () {
 	return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 64
@@ -284,6 +285,7 @@ function connect () {
 					if (msg.type === 'snapshot') {
 						const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
 						const members = await decryptRoster(cryptoKey, msg.members)
+						hasSession = true
 						updateHeader(meta, members)
 						for (const item of msg.steps || []) {
 							const step = await decryptJson(cryptoKey, item.box)
@@ -304,7 +306,13 @@ function connect () {
 					}
 				} catch (err) {
 					shouldReconnect = false
-					appendNotice(`decryption failed (check #key in URL): ${err.message}`)
+					if (hasSession && err.name === 'KeyMismatchError') {
+						appendNotice('host restarted the share with a new #key — ask for the updated URL')
+						statusEl.textContent = `room ${room} · share restarted (new #key)`
+					} else {
+						appendNotice(`decryption failed (check #key in URL): ${err.message}`)
+						statusEl.textContent = `room ${room} · key mismatch`
+					}
 					ws.close()
 					return
 				}
@@ -322,10 +330,7 @@ function connect () {
 		drainInbox()
 	})
 	ws.addEventListener('close', () => {
-		if (!shouldReconnect) {
-			statusEl.textContent = `room ${room} · key mismatch`
-			return
-		}
+		if (!shouldReconnect) return
 		statusEl.textContent = `room ${room} · reconnecting...`
 		setTimeout(connect, 1500)
 	})
