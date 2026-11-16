@@ -2,7 +2,7 @@
 Live multiplayer splitter for Antigravity and Claude Code conversations.
 
 ## Why
-Pair programming with an AI agent usually means screensharing or copy-pasting prompts back and forth. `wye` lets a partner join your active session directly from a browser or terminal so you can both read the stream and send prompts in real time.
+Collaborating with multiple humans and one agent usually means screensharing or copy-pasting prompts back and forth. `wye` lets others join your active session directly from a browser or terminal so everyone can read the stream and send prompts in real time.
 
 ## How
 
