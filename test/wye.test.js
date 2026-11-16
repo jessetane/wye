@@ -661,3 +661,59 @@ test('relay reaps unresponsive peers on heartbeat and frees rooms', async () => 
 	assert.equal(relay.rooms.size, 0)
 	await relay.close()
 })
+
+test('guest shows wait hint on stalled running tool and host cancel settles running tools', async () => {
+	const relay = new Relay()
+	const addr = await relay.open(0, '127.0.0.1')
+	const relayUrl = `ws://127.0.0.1:${addr.port}`
+	let canceled = false
+	const host = new Host({
+		relayUrl,
+		room: 'wait-cancel-room',
+		trackState: false,
+		harness: {
+			type: 'antigravity',
+			conversationId: 'wait-cancel-room',
+			workspace: '/tmp/ws',
+			transcriptPath: '',
+			watch (onStep) {
+				onStep({
+					index: 0,
+					role: 'assistant',
+					text: '',
+					tools: [{ label: 'Bash', detail: 'curl -I https://example.com', status: 'running' }],
+					status: 'DONE'
+				})
+				return () => {}
+			},
+			async send () {},
+			async cancel () { canceled = true }
+		}
+	})
+	await host.connect()
+	let output = ''
+	const guest = new Guest({
+		target: host.webUrl,
+		name: 'alice',
+		interactive: false,
+		waitHintMs: 40,
+		output: { write (s) { output += s } }
+	})
+	await guest.connect()
+	await new Promise(resolve => setTimeout(resolve, 90))
+	assert.match(output, /waiting on Bash \(output or host approval · \/stop or ctrl\+c to cancel\)/)
+	const updated = new Promise(resolve => {
+		guest.addEventListener('step', ev => {
+			if (ev.detail.tools?.[0]?.status === 'error') resolve(ev.detail)
+		})
+	})
+	guest.cancel()
+	const settled = await updated
+	assert.equal(canceled, true)
+	assert.equal(settled.tools[0].status, 'error')
+	assert.equal(settled.tools[0].output, 'Cancelled by alice')
+	assert.match(output, /Cancelled by alice/)
+	guest.disconnect()
+	host.disconnect()
+	await relay.close()
+})
