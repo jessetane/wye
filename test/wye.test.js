@@ -704,11 +704,12 @@ test('relay reaps unresponsive peers on heartbeat and frees rooms', async () => 
 	await relay.close()
 })
 
-test('guest shows wait hint on stalled running tool and host cancel settles running tools', async () => {
+test('guest shows working indicator, wait hint on stalled tool, and settles on cancel', async () => {
 	const relay = new Relay()
 	const addr = await relay.open(0, '127.0.0.1')
 	const relayUrl = `ws://127.0.0.1:${addr.port}`
 	let canceled = false
+	let emitStep
 	const host = new Host({
 		relayUrl,
 		room: 'wait-cancel-room',
@@ -719,13 +720,7 @@ test('guest shows wait hint on stalled running tool and host cancel settles runn
 			workspace: '/tmp/ws',
 			transcriptPath: '',
 			watch (onStep) {
-				onStep({
-					index: 0,
-					role: 'assistant',
-					text: '',
-					tools: [{ label: 'Bash', detail: 'curl -I https://example.com', status: 'running' }],
-					status: 'DONE'
-				})
+				emitStep = onStep
 				return () => {}
 			},
 			async send () {},
@@ -741,9 +736,22 @@ test('guest shows wait hint on stalled running tool and host cancel settles runn
 		waitHintMs: 40,
 		output: { write (s) { output += s } }
 	})
+	const snapped = new Promise(resolve => guest.addEventListener('snapshot', resolve, { once: true }))
 	await guest.connect()
+	await snapped
+	const userDelivered = new Promise(resolve => guest.addEventListener('step', resolve, { once: true }))
+	emitStep({ index: 0, role: 'user', text: 'check headers', status: 'DONE' })
+	await userDelivered
+	assert.match(output, /\* working…/)
+	emitStep({
+		index: 1,
+		role: 'assistant',
+		text: '',
+		tools: [{ label: 'Bash', detail: 'curl -I https://example.com', status: 'running' }],
+		status: 'DONE'
+	})
 	await new Promise(resolve => setTimeout(resolve, 90))
-	assert.match(output, /waiting on Bash \(output or host approval · \/stop or ctrl\+c to cancel\)/)
+	assert.match(output, /\* waiting on Bash \(output or host approval · \/stop or ctrl\+c to cancel\)/)
 	const updated = new Promise(resolve => {
 		guest.addEventListener('step', ev => {
 			if (ev.detail.tools?.[0]?.status === 'error') resolve(ev.detail)

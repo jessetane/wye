@@ -2,6 +2,7 @@ import { importKey, encryptJson, decryptJson, decryptRoster } from '/crypto.js'
 
 const statusEl = document.getElementById('status')
 const logEl = document.getElementById('log')
+const activityEl = document.getElementById('activity')
 const formEl = document.getElementById('composer')
 const inputEl = document.getElementById('input')
 const stopBtn = document.getElementById('stop')
@@ -12,9 +13,9 @@ const stepsByIndex = new Map()
 const stepNodes = new Map()
 const openTools = new Set()
 const openThoughts = new Set()
-const activeWaits = new Map()
 const WAIT_HINT_MS = 5000
-let waitTimer = null
+let activity = null
+let activityTimer = null
 let expandAll = false
 let ws = null
 let cryptoKey = null
@@ -156,44 +157,66 @@ function renderTool (step, tool, toolIdx, isLast) {
 	return details
 }
 
-function formatWaitHint (startedAt) {
-	const secs = Math.floor((Date.now() - startedAt) / 1000)
-	if (secs * 1000 < WAIT_HINT_MS) return ''
-	return `  └ waiting on output or host approval (${secs}s) — Stop to cancel`
-}
-
-function clearActiveWaits () {
-	for (const entry of activeWaits.values()) {
-		entry.el.hidden = true
-		entry.el.textContent = ''
+function formatActivity (act) {
+	const secs = Math.floor((Date.now() - act.startedAt) / 1000)
+	if (act.kind === 'tool') {
+		if (secs * 1000 >= WAIT_HINT_MS) {
+			return `* waiting on ${act.label} (output or host approval · ${secs}s) — Stop to cancel`
+		}
+		return secs > 0 ? `* running ${act.label}… (${secs}s)` : `* running ${act.label}…`
 	}
-	activeWaits.clear()
+	if (secs >= 10) return `* working… (${secs}s) — Stop to cancel`
+	return secs > 0 ? `* working… (${secs}s)` : '* working…'
 }
 
-function syncWaitTimer () {
-	if (activeWaits.size > 0 && !waitTimer) {
-		waitTimer = setInterval(updateWaitHints, 1000)
-	} else if (activeWaits.size === 0 && waitTimer) {
-		clearInterval(waitTimer)
-		waitTimer = null
+function renderActivity () {
+	if (!activity) {
+		activityEl.hidden = true
+		activityEl.textContent = ''
+		if (activityTimer) {
+			clearInterval(activityTimer)
+			activityTimer = null
+		}
+		return
 	}
-}
-
-function updateWaitHints () {
 	const stick = nearBottom()
-	let revealed = false
-	for (const entry of activeWaits.values()) {
-		const text = formatWaitHint(entry.startedAt)
-		if (entry.el.hidden && text) revealed = true
-		entry.el.hidden = !text
-		entry.el.textContent = text
+	const wasHidden = activityEl.hidden
+	activityEl.hidden = false
+	activityEl.textContent = formatActivity(activity)
+	if (stick && wasHidden) logEl.scrollTop = logEl.scrollHeight
+	if (!activityTimer) activityTimer = setInterval(renderActivity, 1000)
+}
+
+function setActivity (next) {
+	if (!next) {
+		activity = null
+	} else if (!activity || activity.kind !== next.kind || activity.label !== next.label) {
+		activity = { kind: next.kind, label: next.label, startedAt: Date.now() }
 	}
-	if (stick && revealed) logEl.scrollTop = logEl.scrollHeight
-	syncWaitTimer()
+	renderActivity()
+}
+
+function deriveActivity (step, fromSnapshot) {
+	if (!step) return null
+	if (step.role === 'assistant') {
+		const tools = step.tools || []
+		const running = tools.find(t => (t.status || 'done') === 'running')
+		if (running) return { kind: 'tool', label: running.label || 'tool' }
+		if (fromSnapshot) return null
+		const cancelled = tools.some(t => t.status === 'error' && String(t.output || '').startsWith('Cancelled by '))
+		if (cancelled) return null
+		if (tools.length > 0 || !step.text) return { kind: 'working', label: '' }
+		return null
+	}
+	if (!fromSnapshot && step.role === 'user') return { kind: 'working', label: '' }
+	return null
+}
+
+function syncActivity (fromSnapshot = false) {
+	setActivity(deriveActivity(stepsByIndex.get(maxStepIndex), fromSnapshot))
 }
 
 function truncateSteps (fromIndex) {
-	if (fromIndex <= maxStepIndex) clearActiveWaits()
 	for (const idx of [...stepsByIndex.keys()]) {
 		if (idx >= fromIndex) {
 			stepsByIndex.delete(idx)
@@ -209,15 +232,11 @@ function truncateSteps (fromIndex) {
 		if (parseInt(key, 10) >= fromIndex) openTools.delete(key)
 	}
 	maxStepIndex = Math.max(-1, ...stepsByIndex.keys())
-	syncWaitTimer()
 }
 
 function renderStep (step) {
 	stepsByIndex.set(step.index, step)
-	if (step.index > maxStepIndex) {
-		maxStepIndex = step.index
-		clearActiveWaits()
-	}
+	if (step.index > maxStepIndex) maxStepIndex = step.index
 	const stick = nearBottom()
 	let node = stepNodes.get(step.index)
 	if (!node) {
@@ -247,23 +266,7 @@ function renderStep (step) {
 			const group = document.createElement('div')
 			group.className = 'tool-group'
 			for (let i = 0; i < tools.length; i++) {
-				const tool = tools[i]
-				const toolKey = `${step.index}:${i}`
-				const status = tool.status || 'done'
-				group.appendChild(renderTool(step, tool, i, i === tools.length - 1))
-				if (status === 'running' && step.index === maxStepIndex) {
-					const prev = activeWaits.get(toolKey)
-					const startedAt = prev ? prev.startedAt : Date.now()
-					const el = document.createElement('div')
-					el.className = 'wait-hint'
-					const text = formatWaitHint(startedAt)
-					el.hidden = !text
-					el.textContent = text
-					activeWaits.set(toolKey, { startedAt, el })
-					group.appendChild(el)
-				} else {
-					activeWaits.delete(toolKey)
-				}
+				group.appendChild(renderTool(step, tools[i], i, i === tools.length - 1))
 			}
 			node.appendChild(group)
 		}
@@ -274,7 +277,6 @@ function renderStep (step) {
 		node.className = 'error'
 		node.textContent = `✖ ${step.text}`
 	}
-	syncWaitTimer()
 	if (stick) logEl.scrollTop = logEl.scrollHeight
 }
 
@@ -321,22 +323,27 @@ function connect () {
 							const step = await decryptJson(cryptoKey, item.box)
 							renderStep(step)
 						}
+						syncActivity(true)
 						logEl.scrollTop = logEl.scrollHeight
 					} else if (msg.type === 'step' && typeof msg.box === 'string') {
 						const step = await decryptJson(cryptoKey, msg.box)
 						if (msg.truncate) truncateSteps(step.index)
 						renderStep(step)
+						syncActivity(false)
 					} else if (msg.type === 'presence') {
 						const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
 						const members = await decryptRoster(cryptoKey, msg.members)
 						const name = await decryptJson(cryptoKey, msg.nameBox)
 						updateHeader(meta, members)
+						if (msg.event === 'cancelled_turn' || msg.event === 'host_left') setActivity(null)
 						appendNotice(`${name} ${msg.event.replaceAll('_', ' ')}`)
 					} else if (msg.type === 'error') {
+						setActivity(null)
 						appendNotice(`error: ${msg.message}`)
 					}
 				} catch (err) {
 					shouldReconnect = false
+					setActivity(null)
 					if (hasSession && err.name === 'KeyMismatchError') {
 						appendNotice('host restarted the share with a new #key — ask for the updated URL')
 						statusEl.textContent = `room ${room} · share restarted (new #key)`
@@ -361,6 +368,7 @@ function connect () {
 		drainInbox()
 	})
 	ws.addEventListener('close', () => {
+		setActivity(null)
 		if (!shouldReconnect) return
 		statusEl.textContent = `room ${room} · reconnecting...`
 		setTimeout(connect, 1500)
@@ -371,6 +379,7 @@ async function submitPrompt () {
 	const text = inputEl.value.trim()
 	if (!text || !cryptoKey || !ws || ws.readyState !== WebSocket.OPEN) return
 	inputEl.value = ''
+	setActivity({ kind: 'working', label: '' })
 	const box = await encryptJson(cryptoKey, { text })
 	ws.send(JSON.stringify({ type: 'prompt', box }))
 }
