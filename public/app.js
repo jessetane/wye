@@ -186,12 +186,33 @@ function updateWaitHints () {
 	syncWaitTimer()
 }
 
+function truncateSteps (fromIndex) {
+	for (const idx of [...stepsByIndex.keys()]) {
+		if (idx >= fromIndex) {
+			stepsByIndex.delete(idx)
+			openThoughts.delete(idx)
+			const node = stepNodes.get(idx)
+			if (node) {
+				node.remove()
+				stepNodes.delete(idx)
+			}
+		}
+	}
+	for (const col of [openTools, runningSince, waitNodes]) {
+		for (const key of [...col.keys()]) {
+			if (parseInt(key, 10) >= fromIndex) col.delete(key)
+		}
+	}
+	maxStepIndex = Math.max(-1, ...stepsByIndex.keys())
+	syncWaitTimer()
+}
+
 function renderStep (step) {
 	stepsByIndex.set(step.index, step)
 	if (step.index > maxStepIndex) {
 		maxStepIndex = step.index
 		for (const key of [...runningSince.keys()]) {
-			if (Number(key.slice(0, key.indexOf(':'))) < maxStepIndex) {
+			if (parseInt(key, 10) < maxStepIndex) {
 				runningSince.delete(key)
 				const el = waitNodes.get(key)
 				if (el) {
@@ -300,6 +321,7 @@ function connect () {
 						const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
 						const members = await decryptRoster(cryptoKey, msg.members)
 						hasSession = true
+						truncateSteps(0)
 						updateHeader(meta, members)
 						for (const item of msg.steps || []) {
 							const step = await decryptJson(cryptoKey, item.box)
@@ -308,6 +330,7 @@ function connect () {
 						logEl.scrollTop = logEl.scrollHeight
 					} else if (msg.type === 'step' && typeof msg.box === 'string') {
 						const step = await decryptJson(cryptoKey, msg.box)
+						if (msg.truncate) truncateSteps(step.index)
 						renderStep(step)
 					} else if (msg.type === 'presence') {
 						const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null

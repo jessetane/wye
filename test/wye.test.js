@@ -842,3 +842,138 @@ test('guest does not show wait hint for running background tool once newer step 
 	guest.disconnect()
 	host.disconnect()
 })
+
+test('Antigravity rewind truncates stale tail and holes live and on snapshot', async t => {
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wye-ag-rewind-'))
+	t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }))
+	const convId = 'ag-rewind-conv'
+	const logDir = path.join(tmpDir, 'brain', convId, '.system_generated', 'logs')
+	fs.mkdirSync(logDir, { recursive: true })
+	const transcriptPath = path.join(logDir, 'transcript_full.jsonl')
+	fs.writeFileSync(transcriptPath, [
+		JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\nhello\n</USER_REQUEST>' }),
+		JSON.stringify({ step_index: 1, type: 'PLANNER_RESPONSE', status: 'DONE', content: 'hi there' }),
+		JSON.stringify({ step_index: 2, type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\nwhat color is the sky\n</USER_REQUEST>' }),
+		JSON.stringify({ step_index: 3, type: 'PLANNER_RESPONSE', status: 'DONE', content: 'The sky is blue.' }),
+		JSON.stringify({ step_index: 4, type: 'PLANNER_RESPONSE', status: 'DONE', content: 'Extra tail step.' })
+	].join('\n') + '\n')
+	const relay = new Relay()
+	t.after(() => relay.close())
+	const addr = await relay.open(0, '127.0.0.1')
+	const host = new Host({
+		relayUrl: `ws://127.0.0.1:${addr.port}`,
+		room: convId,
+		conversationId: convId,
+		appDataDir: tmpDir,
+		lsAddress: '127.0.0.1:1',
+		csrfToken: 'x',
+		reconnect: false,
+		trackState: false
+	})
+	await host.connect()
+	const guest1 = new Guest({ target: host.webUrl, name: 'g1', interactive: false, output: { write () {} } })
+	t.after(() => {
+		guest1.disconnect()
+		host.disconnect()
+	})
+	const snap1 = new Promise(resolve => guest1.addEventListener('snapshot', resolve, { once: true }))
+	await guest1.connect()
+	await snap1
+	assert.deepEqual([...guest1.stepsByIndex.keys()], [0, 1, 2, 3, 4])
+	const truncated = new Promise(resolve => {
+		guest1.addEventListener('truncate', ev => resolve(ev.detail.fromIndex), { once: true })
+	})
+	const gotNewReply = new Promise(resolve => {
+		guest1.addEventListener('step', ev => {
+			if (ev.detail.index === 4 && ev.detail.text === 'Rewound reply.') resolve()
+		})
+	})
+	fs.appendFileSync(transcriptPath, [
+		JSON.stringify({ step_index: 2, type: 'USER_INPUT', status: 'DONE', content: '<USER_REQUEST>\nrewound prompt\n</USER_REQUEST>' }),
+		JSON.stringify({ step_index: 3, type: 'SYSTEM_MESSAGE', status: 'DONE', content: 'internal note' }),
+		JSON.stringify({ step_index: 4, type: 'PLANNER_RESPONSE', status: 'DONE', content: 'Rewound reply.' })
+	].join('\n') + '\n')
+	assert.equal(await truncated, 2)
+	await gotNewReply
+	assert.deepEqual([...guest1.stepsByIndex.keys()], [0, 1, 2, 4])
+	assert.equal(guest1.stepsByIndex.get(2).text, 'rewound prompt')
+	assert.equal(guest1.stepsByIndex.get(3), undefined)
+	assert.equal(guest1.stepsByIndex.get(4).text, 'Rewound reply.')
+	const guest2 = new Guest({ target: host.webUrl, name: 'g2', interactive: false, output: { write () {} } })
+	const snap2 = new Promise(resolve => guest2.addEventListener('snapshot', ev => resolve(ev.detail), { once: true }))
+	await guest2.connect()
+	const detail2 = await snap2
+	assert.deepEqual(detail2.steps.map(s => s.index), [0, 1, 2, 4])
+	guest2.disconnect()
+	guest1.disconnect()
+	host.disconnect()
+})
+
+test('Claude Code rewind via parentUuid truncates abandoned branch across host, relay, and guests', async t => {
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wye-cc-rewind-'))
+	t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }))
+	const configDir = path.join(tmpDir, '.claude')
+	const workspace = path.join(tmpDir, 'proj')
+	const sessionId = 'cc-rewind-sess'
+	const projectDir = path.join(configDir, 'projects', workspace.replace(/[^a-zA-Z0-9_-]/g, '-'))
+	fs.mkdirSync(projectDir, { recursive: true })
+	const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`)
+	fs.writeFileSync(transcriptPath, [
+		JSON.stringify({ type: 'user', uuid: 'u0', parentUuid: null, message: { role: 'user', content: 'first prompt' } }),
+		JSON.stringify({ type: 'assistant', uuid: 'a0', parentUuid: 'u0', message: { id: 'm0', role: 'assistant', content: [{ type: 'text', text: 'first reply' }], stop_reason: 'end_turn' } }),
+		JSON.stringify({ type: 'system', subtype: 'turn_duration', uuid: 'sys0', parentUuid: 'a0' }),
+		JSON.stringify({ type: 'user', uuid: 'u1', parentUuid: 'sys0', message: { role: 'user', content: 'abandoned prompt' } }),
+		JSON.stringify({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'abandoned reply' }], stop_reason: 'end_turn' } })
+	].join('\n') + '\n')
+	const relay = new Relay()
+	t.after(() => relay.close())
+	const addr = await relay.open(0, '127.0.0.1')
+	const host = new Host({
+		relayUrl: `ws://127.0.0.1:${addr.port}`,
+		harness: 'claude',
+		room: sessionId,
+		reconnect: false,
+		trackState: false,
+		session: {
+			pid: process.pid,
+			sessionId,
+			socketPath: path.join(tmpDir, 'unused.sock'),
+			token: '',
+			workspace,
+			transcriptPath
+		}
+	})
+	await host.connect()
+	const guest1 = new Guest({ target: host.webUrl, name: 'g1', interactive: false, output: { write () {} } })
+	t.after(() => {
+		guest1.disconnect()
+		host.disconnect()
+	})
+	const snap1 = new Promise(resolve => guest1.addEventListener('snapshot', resolve, { once: true }))
+	await guest1.connect()
+	await snap1
+	assert.deepEqual([...guest1.stepsByIndex.values()].map(s => s.text), ['first prompt', 'first reply', 'abandoned prompt', 'abandoned reply'])
+	const truncated = new Promise(resolve => {
+		guest1.addEventListener('truncate', ev => resolve(ev.detail.fromIndex), { once: true })
+	})
+	const gotNewReply = new Promise(resolve => {
+		guest1.addEventListener('step', ev => {
+			if (ev.detail.text === 'rewound reply') resolve()
+		})
+	})
+	fs.appendFileSync(transcriptPath, [
+		JSON.stringify({ type: 'user', uuid: 'u2', parentUuid: 'sys0', message: { role: 'user', content: 'rewound prompt' } }),
+		JSON.stringify({ type: 'assistant', uuid: 'a2', parentUuid: 'u2', message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'rewound reply' }], stop_reason: 'end_turn' } })
+	].join('\n') + '\n')
+	assert.equal(await truncated, 2)
+	await gotNewReply
+	assert.deepEqual([...guest1.stepsByIndex.values()].map(s => s.text), ['first prompt', 'first reply', 'rewound prompt', 'rewound reply'])
+	const guest2 = new Guest({ target: host.webUrl, name: 'g2', interactive: false, output: { write () {} } })
+	const snap2 = new Promise(resolve => guest2.addEventListener('snapshot', ev => resolve(ev.detail), { once: true }))
+	await guest2.connect()
+	const detail2 = await snap2
+	assert.deepEqual(detail2.steps.map(s => s.text), ['first prompt', 'first reply', 'rewound prompt', 'rewound reply'])
+	guest2.disconnect()
+	guest1.disconnect()
+	host.disconnect()
+})
