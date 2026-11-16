@@ -12,8 +12,7 @@ const stepsByIndex = new Map()
 const stepNodes = new Map()
 const openTools = new Set()
 const openThoughts = new Set()
-const runningSince = new Map()
-const waitNodes = new Map()
+const activeWaits = new Map()
 const WAIT_HINT_MS = 5000
 let waitTimer = null
 let expandAll = false
@@ -163,10 +162,18 @@ function formatWaitHint (startedAt) {
 	return `  └ waiting on output or host approval (${secs}s) — Stop to cancel`
 }
 
+function clearActiveWaits () {
+	for (const entry of activeWaits.values()) {
+		entry.el.hidden = true
+		entry.el.textContent = ''
+	}
+	activeWaits.clear()
+}
+
 function syncWaitTimer () {
-	if (runningSince.size > 0 && !waitTimer) {
+	if (activeWaits.size > 0 && !waitTimer) {
 		waitTimer = setInterval(updateWaitHints, 1000)
-	} else if (runningSince.size === 0 && waitTimer) {
+	} else if (activeWaits.size === 0 && waitTimer) {
 		clearInterval(waitTimer)
 		waitTimer = null
 	}
@@ -175,18 +182,18 @@ function syncWaitTimer () {
 function updateWaitHints () {
 	const stick = nearBottom()
 	let revealed = false
-	for (const [key, el] of waitNodes) {
-		const startedAt = runningSince.get(key)
-		const text = startedAt ? formatWaitHint(startedAt) : ''
-		if (el.hidden && text) revealed = true
-		el.hidden = !text
-		el.textContent = text
+	for (const entry of activeWaits.values()) {
+		const text = formatWaitHint(entry.startedAt)
+		if (entry.el.hidden && text) revealed = true
+		entry.el.hidden = !text
+		entry.el.textContent = text
 	}
 	if (stick && revealed) logEl.scrollTop = logEl.scrollHeight
 	syncWaitTimer()
 }
 
 function truncateSteps (fromIndex) {
+	if (fromIndex <= maxStepIndex) clearActiveWaits()
 	for (const idx of [...stepsByIndex.keys()]) {
 		if (idx >= fromIndex) {
 			stepsByIndex.delete(idx)
@@ -198,10 +205,8 @@ function truncateSteps (fromIndex) {
 			}
 		}
 	}
-	for (const col of [openTools, runningSince, waitNodes]) {
-		for (const key of [...col.keys()]) {
-			if (parseInt(key, 10) >= fromIndex) col.delete(key)
-		}
+	for (const key of [...openTools]) {
+		if (parseInt(key, 10) >= fromIndex) openTools.delete(key)
 	}
 	maxStepIndex = Math.max(-1, ...stepsByIndex.keys())
 	syncWaitTimer()
@@ -211,21 +216,9 @@ function renderStep (step) {
 	stepsByIndex.set(step.index, step)
 	if (step.index > maxStepIndex) {
 		maxStepIndex = step.index
-		for (const key of [...runningSince.keys()]) {
-			if (parseInt(key, 10) < maxStepIndex) {
-				runningSince.delete(key)
-				const el = waitNodes.get(key)
-				if (el) {
-					el.hidden = true
-					el.textContent = ''
-				}
-			}
-		}
+		clearActiveWaits()
 	}
 	const stick = nearBottom()
-	for (const key of waitNodes.keys()) {
-		if (key.startsWith(`${step.index}:`)) waitNodes.delete(key)
-	}
 	let node = stepNodes.get(step.index)
 	if (!node) {
 		node = document.createElement('div')
@@ -259,16 +252,17 @@ function renderStep (step) {
 				const status = tool.status || 'done'
 				group.appendChild(renderTool(step, tool, i, i === tools.length - 1))
 				if (status === 'running' && step.index === maxStepIndex) {
-					if (!runningSince.has(toolKey)) runningSince.set(toolKey, Date.now())
-					const wait = document.createElement('div')
-					wait.className = 'wait-hint'
-					const text = formatWaitHint(runningSince.get(toolKey))
-					wait.hidden = !text
-					wait.textContent = text
-					waitNodes.set(toolKey, wait)
-					group.appendChild(wait)
+					const prev = activeWaits.get(toolKey)
+					const startedAt = prev ? prev.startedAt : Date.now()
+					const el = document.createElement('div')
+					el.className = 'wait-hint'
+					const text = formatWaitHint(startedAt)
+					el.hidden = !text
+					el.textContent = text
+					activeWaits.set(toolKey, { startedAt, el })
+					group.appendChild(el)
 				} else {
-					runningSince.delete(toolKey)
+					activeWaits.delete(toolKey)
 				}
 			}
 			node.appendChild(group)
@@ -335,9 +329,9 @@ function connect () {
 					} else if (msg.type === 'presence') {
 						const meta = msg.metaBox ? await decryptJson(cryptoKey, msg.metaBox) : null
 						const members = await decryptRoster(cryptoKey, msg.members)
-						const peerName = msg.nameBox ? await decryptJson(cryptoKey, msg.nameBox) : 'peer'
+						const name = await decryptJson(cryptoKey, msg.nameBox)
 						updateHeader(meta, members)
-						appendNotice(`${peerName} ${msg.event.replaceAll('_', ' ')}`)
+						appendNotice(`${name} ${msg.event.replaceAll('_', ' ')}`)
 					} else if (msg.type === 'error') {
 						appendNotice(`error: ${msg.message}`)
 					}
