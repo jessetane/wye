@@ -27,15 +27,6 @@ function nearBottom () {
 	return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 64
 }
 
-function appendNotice (text) {
-	const stick = nearBottom()
-	const div = document.createElement('div')
-	div.className = 'notice'
-	div.textContent = `── ${text} ──`
-	logEl.appendChild(div)
-	if (stick) logEl.scrollTop = logEl.scrollHeight
-}
-
 function appendInlineMarkdown (parent, line) {
 	const tokenRe = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g
 	let last = 0
@@ -157,7 +148,12 @@ function renderTool (step, tool, toolIdx, isLast) {
 	return details
 }
 
+function isRunningActivity (act) {
+	return Boolean(act && (act.kind === 'working' || act.kind === 'tool'))
+}
+
 function formatActivity (act) {
+	if (act.kind === 'info' || act.kind === 'error') return act.text
 	const secs = Math.floor((Date.now() - act.startedAt) / 1000)
 	if (act.kind === 'tool') {
 		if (secs * 1000 >= WAIT_HINT_MS) {
@@ -170,8 +166,11 @@ function formatActivity (act) {
 }
 
 function renderActivity () {
+	const active = isRunningActivity(activity)
+	stopBtn.hidden = !active
 	if (!activity) {
 		activityEl.hidden = true
+		activityEl.className = ''
 		activityEl.textContent = ''
 		if (activityTimer) {
 			clearInterval(activityTimer)
@@ -182,14 +181,22 @@ function renderActivity () {
 	const stick = nearBottom()
 	const wasHidden = activityEl.hidden
 	activityEl.hidden = false
+	activityEl.className = activity.kind === 'error' ? 'error' : ''
 	activityEl.textContent = formatActivity(activity)
 	if (stick && wasHidden) logEl.scrollTop = logEl.scrollHeight
-	if (!activityTimer) activityTimer = setInterval(renderActivity, 1000)
+	if (active) {
+		if (!activityTimer) activityTimer = setInterval(renderActivity, 1000)
+	} else if (activityTimer) {
+		clearInterval(activityTimer)
+		activityTimer = null
+	}
 }
 
 function setActivity (next) {
 	if (!next) {
 		activity = null
+	} else if (next.kind === 'info' || next.kind === 'error') {
+		activity = { kind: next.kind, text: next.text }
 	} else if (!activity || activity.kind !== next.kind || activity.label !== next.label) {
 		activity = { kind: next.kind, label: next.label, startedAt: Date.now() }
 	}
@@ -293,6 +300,7 @@ function updateHeader (meta, members) {
 	if (meta) cachedMeta = meta
 	const parts = [`room ${room}`]
 	if (Array.isArray(members) && members.length > 0) {
+		if (!members.some(m => m.role === 'host')) parts.push('host offline')
 		parts.push(members.map(m => `${m.name}${m.role === 'host' ? '*' : ''}`).join(', '))
 	}
 	if (cachedMeta && cachedMeta.workspace) parts.push(cachedMeta.workspace)
@@ -335,20 +343,22 @@ function connect () {
 						const members = await decryptRoster(cryptoKey, msg.members)
 						const name = await decryptJson(cryptoKey, msg.nameBox)
 						updateHeader(meta, members)
-						if (msg.event === 'cancelled_turn' || msg.event === 'host_left') setActivity(null)
-						appendNotice(`${name} ${msg.event.replaceAll('_', ' ')}`)
+						if (msg.event === 'cancelled_turn') {
+							setActivity({ kind: 'info', text: `* cancelled by ${name}` })
+						} else if (msg.event === 'host_left') {
+							setActivity(null)
+						}
 					} else if (msg.type === 'error') {
-						setActivity(null)
-						appendNotice(`error: ${msg.message}`)
+						setActivity({ kind: 'error', text: `✖ ${msg.message}` })
 					}
 				} catch (err) {
 					shouldReconnect = false
-					setActivity(null)
+					inputEl.disabled = true
 					if (hasSession && err.name === 'KeyMismatchError') {
-						appendNotice('host restarted the share with a new #key — ask for the updated URL')
+						setActivity({ kind: 'error', text: '✖ host restarted the share with a new #key — ask for the updated URL' })
 						statusEl.textContent = `room ${room} · share restarted (new #key)`
 					} else {
-						appendNotice(`decryption failed (check #key in URL): ${err.message}`)
+						setActivity({ kind: 'error', text: `✖ decryption failed (check #key in URL): ${err.message}` })
 						statusEl.textContent = `room ${room} · key mismatch`
 					}
 					ws.close()
@@ -368,8 +378,8 @@ function connect () {
 		drainInbox()
 	})
 	ws.addEventListener('close', () => {
-		setActivity(null)
 		if (!shouldReconnect) return
+		setActivity(null)
 		statusEl.textContent = `room ${room} · reconnecting...`
 		setTimeout(connect, 1500)
 	})
@@ -404,7 +414,8 @@ window.addEventListener('keydown', event => {
 })
 
 stopBtn.addEventListener('click', () => {
-	if (ws && ws.readyState === WebSocket.OPEN) {
+	if (ws && ws.readyState === WebSocket.OPEN && isRunningActivity(activity)) {
+		setActivity({ kind: 'info', text: '* cancelling…' })
 		ws.send(JSON.stringify({ type: 'cancel' }))
 	}
 })
@@ -413,9 +424,8 @@ async function boot () {
 	const keyStr = location.hash.slice(1).trim()
 	if (!keyStr) {
 		statusEl.textContent = `room ${room} · missing #key`
-		appendNotice('missing encryption #key in URL fragment')
+		setActivity({ kind: 'error', text: '✖ missing encryption #key in URL fragment' })
 		inputEl.disabled = true
-		stopBtn.disabled = true
 		return
 	}
 	try {
@@ -423,9 +433,8 @@ async function boot () {
 		connect()
 	} catch (err) {
 		statusEl.textContent = `room ${room} · invalid #key`
-		appendNotice(err.message)
+		setActivity({ kind: 'error', text: `✖ ${err.message}` })
 		inputEl.disabled = true
-		stopBtn.disabled = true
 	}
 }
 

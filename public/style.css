@@ -33,10 +33,6 @@ body {
 	gap: 0.5rem;
 }
 
-.notice {
-	color: #707070;
-}
-
 .user {
 	background: #1c1f24;
 	padding: 0.3rem 0.55rem;
@@ -141,6 +137,11 @@ body {
 #activity {
 	order: 1;
 	color: #8b929e;
+	white-space: pre-wrap;
+}
+
+#activity.error {
+	color: #e06c75;
 }
 
 .status-done .dot {
