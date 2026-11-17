@@ -276,6 +276,8 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	assert.equal(hostSession.room, convId)
 	assert.ok(hostSession.key.length >= 20)
 	assert.equal(listHosts(stateDir).length, 1)
+	const stateStat = fs.statSync(hostSession.stateFile)
+	assert.equal(stateStat.mode & 0o777, 0o600)
 	const indexRes = await fetch(`http://127.0.0.1:${relayPort}/`)
 	assert.equal(indexRes.status, 200)
 	const indexText = await indexRes.text()
