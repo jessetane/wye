@@ -21,19 +21,23 @@ ln -sf "$(npm root -g)/wye/SKILL.md" <skills-dir>/SKILL.md
 
 ## Usage
 
-* **Share (host):** Ask your agent to *"share this conversation"*. It runs `wye` in the background and gives you a link for guests.
-* **Join (web):** Open the link in any browser.
-* **Join (CLI):** Run `wye join '<url>' [--name <user>]`.
-* **Stop (host):** Ask your agent to *"stop sharing"*, or stop the background task in your harness UI.
+### Host
+You stay in your normal Antigravity or Claude Code session:
 
-### Notes
+* **Start:** Ask your agent to *"share this conversation"* and send the link it returns to your guests.
+* **Stop:** Ask your agent to *"stop sharing"*, or stop the background task in your harness UI.
+* **Approvals:** Tool permission prompts still appear on your machine as usual.
+* **Rewinding:** Rewinds don't update guest views until the next message is sent, and rewinding past the turn where you started sharing stops the share.
 
+### Guest
+
+* **Web:** Open the share link in any browser (no install needed).
+* **CLI:** Run `wye join '<url>' [--name <user>]`.
 * **Expand output:** Press `Ctrl+O` to toggle full thinking and tool output.
-* **Tool approvals:** Permission prompts stay on the host. Guests can cancel a stalled turn with `Stop` (web) or `/stop` / `Ctrl+C` (CLI).
-* **Plain prompts only:** Guests send regular messages; harness slash commands (`/rewind`, `/mcp`, etc.) only work on the host.
-* **Rewinding:** Host rewinds reflect on guests once the next message is sent, and rewinding past the share turn stops the background share task.
+* **Cancel:** Click `Stop` (web) or use `/stop` / `Ctrl+C` (CLI) if a turn stalls waiting on a command or host approval.
+* **Prompts:** Plain messages only—harness slash commands (`/rewind`, `/mcp`, etc.) don't work from guest views.
 
-### Relay
+## Relay
 By default, `wye` connects to the public relay at `wss://wye.jessetane.com`. To self-host a relay and point clients at it via `--relay` or `WYE_RELAY`:
 
 ```sh
