@@ -491,7 +491,7 @@ test('end-to-end Claude Code host discovers session, streams JSONL, and injects 
 	fs.rmSync(shortTmp, { recursive: true, force: true })
 })
 
-test('large multi-tool step (>100KB encrypted) streams cleanly across WsPeer fragmentation', async () => {
+test('large multi-tool step (>100KB encrypted) streams cleanly across WebSocket frames', async () => {
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wye-large-'))
 	const convId = '99999999-2222-3333-4444-555555555555'
 	const logDir = path.join(tmpDir, 'brain', convId, '.system_generated', 'logs')
@@ -652,8 +652,9 @@ test('relay clears old-epoch state on host restart', async () => {
 	await relay.close()
 })
 
-test('relay reaps unresponsive peers on heartbeat and frees rooms', async () => {
+test('relay reaps unresponsive peers on heartbeat and frees rooms', async t => {
 	const relay = new Relay({ pingIntervalMs: 30 })
+	t.after(() => relay.close())
 	const addr = await relay.open(0, '127.0.0.1')
 	const rawSock = net.createConnection({ host: '127.0.0.1', port: addr.port })
 	await new Promise(resolve => {
@@ -670,8 +671,10 @@ test('relay reaps unresponsive peers on heartbeat and frees rooms', async () => 
 		})
 		rawSock.once('data', resolve)
 	})
+	rawSock.resume()
 	assert.equal(relay.rooms.size, 1)
 	await new Promise(resolve => { rawSock.on('close', resolve) })
+	await new Promise(resolve => setTimeout(resolve, 20))
 	assert.equal(relay.rooms.size, 0)
 	const badWs = new WebSocket(`ws://127.0.0.1:${addr.port}/ws/malformed-room?role=guest`)
 	await new Promise(resolve => { badWs.onopen = resolve })
@@ -694,14 +697,15 @@ test('relay reaps unresponsive peers on heartbeat and frees rooms', async () => 
 		})
 		hugeSock.once('data', resolve)
 	})
+	hugeSock.resume()
 	const header = new Uint8Array(10)
 	header[0] = 0x81
 	header[1] = 0xff
 	new DataView(header.buffer).setBigUint64(2, 10_000_000n)
 	hugeSock.write(header)
 	await new Promise(resolve => { hugeSock.on('close', resolve) })
+	await new Promise(resolve => setTimeout(resolve, 20))
 	assert.equal(relay.rooms.size, 0)
-	await relay.close()
 })
 
 test('guest shows working indicator, wait hint on stalled tool, and settles on cancel', async () => {

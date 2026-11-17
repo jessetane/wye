@@ -11,5 +11,8 @@
 	},
 	"repository": "https://github.com/jessetane/wye",
 	"author": "jesse.tane@gmail.com",
-	"license": "MIT"
+	"license": "MIT",
+	"dependencies": {
+		"ws": "^8.23.0"
+	}
 }
