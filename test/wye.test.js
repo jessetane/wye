@@ -461,7 +461,6 @@ test('end-to-end Claude Code host discovers session, streams JSONL, and injects 
 	let resolveReplyStep
 	const replyStepDone = new Promise(resolve => { resolveReplyStep = resolve })
 	const guestSession = new Guest({
-		env: {},
 		target: hostSession.webUrl,
 		name: 'jesse',
 		interactive: false,
