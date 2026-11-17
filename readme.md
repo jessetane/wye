@@ -20,14 +20,15 @@ ln -sf "$(npm root -g)/wye/SKILL.md" <skills-dir>/SKILL.md
 ```
 
 ## Usage
-To share a conversation, ask the agent inside that conversation to share it (e.g. *"share this conversation"*). The skill instructs the agent to run `wye host` in the background and reply with a `web:` URL (open in any browser) and a `join:` CLI command:
+To share an active conversation, ask the agent inside that conversation to share it (e.g. *"share this conversation"*). The skill runs `wye host` in the background and replies with a browser link and a CLI command for guests:
 
 ```sh
-wye host [--relay wss://wye.jessetane.com] [--harness antigravity|claude] [--room <token>]
 wye join <url-or-room#key> [--name <user>]
 wye status
 wye stop [<room-or-conversation-id>]
 ```
+
+For Claude Code, you can also attach manually from another terminal in the same project directory without the skill (`wye host [--session <id>] [--room <token>]`).
 
 In guest views, `Ctrl+O` toggles full thinking and tool output. Tool approval prompts stay on the host; if a turn stalls waiting on approval or a slow command, guests can unstick it with `Stop` (web) or `/stop` / `Ctrl+C` (CLI).
 
