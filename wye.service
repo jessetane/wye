@@ -4,7 +4,9 @@ Description=wye
 [Service]
 User=www-data
 WorkingDirectory=/opt/wye
-ExecStart=/opt/wye/bin/wye.js relay --bind 127.0.0.1 --port 8787
+EnvironmentFile=-/opt/wye/.env
+ExecStart=/opt/wye/bin/wye.js relay
+LimitNOFILE=65535
 RestartSec=10
 Restart=always
 

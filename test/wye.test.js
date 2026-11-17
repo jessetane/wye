@@ -958,7 +958,15 @@ test('rewound user step truncates superseded tail and holes live and on snapshot
 })
 
 test('relay bounds room count, guest count, peers per IP, room step bytes, and maxPayload', async t => {
-	const relay = new Relay({ maxRooms: 2, maxGuests: 1, maxPeersPerIp: 3, maxRoomBytes: 4000, maxPayload: 16384 })
+	const relay = new Relay({
+		env: {
+			MAX_ROOMS: '2',
+			MAX_GUESTS: '1',
+			MAX_PEERS_PER_IP: '3',
+			MAX_ROOM_BYTES: '4000',
+			MAX_PAYLOAD: '16384'
+		}
+	})
 	t.after(() => relay.close())
 	const addr = await relay.open(0, '127.0.0.1')
 	const relayUrl = `ws://127.0.0.1:${addr.port}`

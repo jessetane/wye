@@ -35,8 +35,10 @@ In guest views, `Ctrl+O` toggles full thinking and tool output. Tool approval pr
 By default, `wye` connects to the public relay at `wss://wye.jessetane.com`. To self-host a relay and point clients at it via `--relay` or `WYE_RELAY`:
 
 ```sh
-wye relay [--port 8787] [--bind 0.0.0.0]
+wye relay [--port 8787] [--bind 127.0.0.1]
 ```
+
+See [`.env.example`](.env.example) for relay environment settings (`wye` loads `.env` automatically if present).
 
 ## Security
 Sessions are end-to-end encrypted between host and guests, and the relay never sees the `#<key>` fragment. However, anyone you share the link with can submit prompts directly to your live agent—with whatever filesystem, shell, and tool permissions your session has. Only share links with people you trust.

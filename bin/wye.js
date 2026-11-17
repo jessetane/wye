@@ -1,11 +1,12 @@
 #!/usr/bin/env node
+import fs from 'node:fs'
 import { parseArgs } from 'node:util'
 import { Relay } from '../lib/relay.js'
 import { DEFAULT_RELAY_URL, Host, listHosts, stopHosts } from '../lib/host.js'
 import { Guest } from '../lib/join.js'
 
 const USAGE = `Usage:
-  wye relay  [--port 8787] [--bind 0.0.0.0]
+  wye relay  [--port 8787] [--bind 127.0.0.1]
   wye host   [--relay ${DEFAULT_RELAY_URL}] [--harness antigravity|claude] [--session <id>] [--room <token>] [--key <key>] [--name <user>]
   wye join   <url-or-room#key> [--relay ${DEFAULT_RELAY_URL}] [--key <key>] [--name <user>]
   wye status
@@ -33,10 +34,10 @@ if (values.help || !cmd) {
 }
 
 if (cmd === 'relay') {
-	const port = values.port ? Number(values.port) : Number(process.env.PORT || 8787)
-	const bind = values.bind || process.env.BIND || '0.0.0.0'
-	const relay = new Relay({ port, host: bind })
-	const addr = await relay.open(port, bind)
+	if (fs.existsSync('.env')) process.loadEnvFile('.env')
+	const port = values.port ? Number(values.port) : undefined
+	const relay = new Relay({ port, host: values.bind })
+	const addr = await relay.open()
 	const hostLabel = addr.family === 'IPv6' ? `[${addr.address}]` : addr.address
 	console.log(`wye relay listening on ws://${hostLabel}:${addr.port}`)
 	async function shutdown () {
