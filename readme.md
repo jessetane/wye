@@ -20,17 +20,18 @@ ln -sf "$(npm root -g)/wye/SKILL.md" <skills-dir>/SKILL.md
 ```
 
 ## Usage
-To share an active conversation, ask the agent inside that conversation to share it (e.g. *"share this conversation"*). The skill runs `wye host` in the background and replies with a browser link and a CLI command for guests:
 
-```sh
-wye join <url-or-room#key> [--name <user>]
-wye status
-wye stop [<room-or-conversation-id>]
-```
+* **Share (host):** Ask your agent to *"share this conversation"*. It runs `wye` in the background and gives you a link for guests.
+* **Join (web):** Open the link in any browser.
+* **Join (CLI):** Run `wye join '<url>' [--name <user>]`.
+* **Stop (host):** Ask your agent to *"stop sharing"*, or stop the background task in your harness UI.
 
-For Claude Code, you can also attach manually from another terminal in the same project directory without the skill (`wye host [--session <id>] [--room <token>]`).
+### Notes
 
-In guest views, `Ctrl+O` toggles full thinking and tool output. Tool approval prompts stay on the host; if a turn stalls waiting on approval or a slow command, guests can unstick it with `Stop` (web) or `/stop` / `Ctrl+C` (CLI).
+* **Expand output:** Press `Ctrl+O` to toggle full thinking and tool output.
+* **Tool approvals:** Permission prompts stay on the host. Guests can cancel a stalled turn with `Stop` (web) or `/stop` / `Ctrl+C` (CLI).
+* **Plain prompts only:** Guests send regular messages; harness slash commands (`/rewind`, `/mcp`, etc.) only work on the host.
+* **Rewinding:** Host rewinds reflect on guests once the next message is sent, and rewinding past the share turn stops the background share task.
 
 ### Relay
 By default, `wye` connects to the public relay at `wss://wye.jessetane.com`. To self-host a relay and point clients at it via `--relay` or `WYE_RELAY`:
