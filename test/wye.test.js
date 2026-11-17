@@ -713,7 +713,7 @@ test('guest shows working indicator, wait hint on stalled tool, and settles on c
 	const relay = new Relay()
 	const addr = await relay.open(0, '127.0.0.1')
 	const relayUrl = `ws://127.0.0.1:${addr.port}`
-	let canceled = false
+	let cancelCount = 0
 	let emitStep
 	const host = new Host({
 		relayUrl,
@@ -729,7 +729,7 @@ test('guest shows working indicator, wait hint on stalled tool, and settles on c
 				return () => {}
 			},
 			async send () {},
-			async cancel () { canceled = true }
+			async cancel () { cancelCount += 1 }
 		}
 	})
 	await host.connect()
@@ -763,11 +763,20 @@ test('guest shows working indicator, wait hint on stalled tool, and settles on c
 		})
 	})
 	guest.cancel()
+	guest.cancel()
 	const settled = await updated
-	assert.equal(canceled, true)
+	await new Promise(resolve => setTimeout(resolve, 30))
+	assert.equal(cancelCount, 1)
+	assert.equal((output.match(/cancelled turn/g) || []).length, 1)
 	assert.equal(settled.tools[0].status, 'error')
 	assert.equal(settled.tools[0].output, 'Cancelled by alice')
 	assert.match(output, /Cancelled by alice/)
+	const nextUser = new Promise(resolve => guest.addEventListener('step', resolve, { once: true }))
+	emitStep({ index: 2, role: 'user', text: 'next turn', status: 'DONE' })
+	await nextUser
+	guest.cancel()
+	await new Promise(resolve => setTimeout(resolve, 30))
+	assert.equal(cancelCount, 2)
 	guest.disconnect()
 	host.disconnect()
 	await relay.close()
