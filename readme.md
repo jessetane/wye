@@ -37,7 +37,7 @@ You stay in your normal Antigravity or Claude Code session:
 * **Cancel:** Click `Stop` (web) or use `/stop` / `Ctrl+C` (CLI) if a turn stalls waiting on a command or host approval.
 * **Prompts:** Plain messages only—harness slash commands (`/rewind`, `/mcp`, etc.) don't work from guest views.
 
-## Relay
+### Relay
 By default, `wye` connects to the public relay at `wss://wye.jessetane.com`. To self-host a relay and point clients at it via `--relay` or `WYE_RELAY`:
 
 ```sh
