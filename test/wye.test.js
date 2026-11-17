@@ -957,8 +957,8 @@ test('rewound user step truncates superseded tail and holes live and on snapshot
 	guest2.disconnect()
 })
 
-test('relay bounds room count, guest count, room step bytes, and maxPayload', async t => {
-	const relay = new Relay({ maxRooms: 2, maxGuests: 1, maxRoomBytes: 4000, maxPayload: 16384 })
+test('relay bounds room count, guest count, peers per IP, room step bytes, and maxPayload', async t => {
+	const relay = new Relay({ maxRooms: 2, maxGuests: 1, maxPeersPerIp: 3, maxRoomBytes: 4000, maxPayload: 16384 })
 	t.after(() => relay.close())
 	const addr = await relay.open(0, '127.0.0.1')
 	const relayUrl = `ws://127.0.0.1:${addr.port}`
@@ -1014,8 +1014,35 @@ test('relay bounds room count, guest count, room step bytes, and maxPayload', as
 	assert.equal(relayRoom.steps.has(0), false)
 	assert.equal(relayRoom.steps.has(2), true)
 	const oversized = new WebSocket(`ws://127.0.0.1:${addr.port}/ws/cap-room-2?role=guest`)
-	await new Promise(resolve => { oversized.onopen = resolve })
-	const closed = new Promise(resolve => { oversized.onclose = resolve })
-	oversized.send('x'.repeat(20000))
+	await assert.rejects(() => new Promise((resolve, reject) => {
+		oversized.onopen = resolve
+		oversized.onerror = reject
+	}))
+	const proxiedWs = net.createConnection({ host: '127.0.0.1', port: addr.port })
+	const proxiedHeaders = await new Promise(resolve => {
+		proxiedWs.on('connect', () => {
+			proxiedWs.write([
+				'GET /ws/cap-room-2?role=guest HTTP/1.1',
+				`Host: 127.0.0.1:${addr.port}`,
+				'X-Forwarded-For: ::ffff:203.0.113.10',
+				'Upgrade: websocket',
+				'Connection: Upgrade',
+				'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+				'Sec-WebSocket-Version: 13',
+				'\r\n'
+			].join('\r\n'))
+		})
+		proxiedWs.once('data', chunk => resolve(chunk.toString('utf8')))
+	})
+	assert.match(proxiedHeaders, /^HTTP\/1\.1 101 /)
+	assert.equal(relay.peersByIp.get('203.0.113.10'), 1)
+	proxiedWs.destroy()
+	guest1.disconnect()
+	await new Promise(resolve => setTimeout(resolve, 20))
+	assert.equal(relay.peersByIp.has('203.0.113.10'), false)
+	const oversizedOk = new WebSocket(`ws://127.0.0.1:${addr.port}/ws/cap-room-2?role=guest`)
+	await new Promise(resolve => { oversizedOk.onopen = resolve })
+	const closed = new Promise(resolve => { oversizedOk.onclose = resolve })
+	oversizedOk.send('x'.repeat(20000))
 	await closed
 })
