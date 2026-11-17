@@ -956,3 +956,66 @@ test('rewound user step truncates superseded tail and holes live and on snapshot
 	assert.deepEqual((await snap2).steps.map(s => s.index), [0, 1, 2, 4])
 	guest2.disconnect()
 })
+
+test('relay bounds room count, guest count, room step bytes, and maxPayload', async t => {
+	const relay = new Relay({ maxRooms: 2, maxGuests: 1, maxRoomBytes: 4000, maxPayload: 16384 })
+	t.after(() => relay.close())
+	const addr = await relay.open(0, '127.0.0.1')
+	const relayUrl = `ws://127.0.0.1:${addr.port}`
+	let emitStep
+	const makeStubHost = room => new Host({
+		relayUrl,
+		room,
+		reconnect: false,
+		trackState: false,
+		harness: {
+			type: 'antigravity',
+			conversationId: room,
+			workspace: '/tmp/ws',
+			transcriptPath: '',
+			watch (onStep) {
+				if (room === 'cap-room-1') emitStep = onStep
+				return () => {}
+			},
+			async send () {},
+			async cancel () {}
+		}
+	})
+	const host1 = makeStubHost('cap-room-1')
+	const host2 = makeStubHost('cap-room-2')
+	const host3 = makeStubHost('cap-room-3')
+	t.after(() => {
+		host1.disconnect()
+		host2.disconnect()
+		host3.disconnect()
+	})
+	await host1.connect()
+	await host2.connect()
+	await assert.rejects(() => host3.connect())
+	const guest1 = new Guest({ target: host1.webUrl, name: 'g1', interactive: false, output: { write () {} } })
+	const guest2 = new Guest({ target: host1.webUrl, name: 'g2', interactive: false, output: { write () {} } })
+	t.after(() => {
+		guest1.disconnect()
+		guest2.disconnect()
+	})
+	await guest1.connect()
+	await assert.rejects(() => guest2.connect())
+	const seenOnGuest1 = new Promise(resolve => {
+		guest1.addEventListener('step', ev => {
+			if (ev.detail.index === 2) resolve()
+		})
+	})
+	emitStep({ index: 0, role: 'assistant', text: 'a'.repeat(1600), tools: [], status: 'DONE' })
+	emitStep({ index: 1, role: 'assistant', text: 'b'.repeat(1600), tools: [], status: 'DONE' })
+	emitStep({ index: 2, role: 'assistant', text: 'c'.repeat(1600), tools: [], status: 'DONE' })
+	await seenOnGuest1
+	const relayRoom = relay.rooms.get('cap-room-1')
+	assert.ok(relayRoom.stepBytes <= 4000)
+	assert.equal(relayRoom.steps.has(0), false)
+	assert.equal(relayRoom.steps.has(2), true)
+	const oversized = new WebSocket(`ws://127.0.0.1:${addr.port}/ws/cap-room-2?role=guest`)
+	await new Promise(resolve => { oversized.onopen = resolve })
+	const closed = new Promise(resolve => { oversized.onclose = resolve })
+	oversized.send('x'.repeat(20000))
+	await closed
+})
