@@ -964,8 +964,7 @@ test('relay bounds room count, guest count, peers per IP, room step bytes, and m
 			MAX_ROOMS: '2',
 			MAX_GUESTS: '1',
 			MAX_PEERS_PER_IP: '3',
-			MAX_ROOM_BYTES: '4000',
-			MAX_PAYLOAD: '16384'
+			MAX_ROOM_BYTES: '4000'
 		}
 	})
 	t.after(() => relay.close())
