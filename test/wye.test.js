@@ -285,9 +285,11 @@ test('end-to-end Antigravity host + relay + guest syncs history, prompts, cancel
 	assert.match(indexText, /github\.com\/jessetane\/wye/)
 	const htmlRes = await fetch(`http://127.0.0.1:${relayPort}/${convId}`)
 	assert.equal(htmlRes.status, 200)
+	assert.equal(htmlRes.headers.get('cache-control'), 'no-cache')
 	assert.match(await htmlRes.text(), /<script type="module" src="\/app\.js"><\/script>/)
 	const cssRes = await fetch(`http://127.0.0.1:${relayPort}/style.css`)
 	assert.equal(cssRes.status, 200)
+	assert.equal(cssRes.headers.get('cache-control'), 'no-cache')
 	const cryptoRes = await fetch(`http://127.0.0.1:${relayPort}/crypto.js`)
 	assert.equal(cryptoRes.status, 200)
 	const seenSteps = []
