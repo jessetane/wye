@@ -11,8 +11,6 @@ description: >-
 
 Allows a partner to join the host's active **Antigravity** (Desktop or `agy` CLI) or **Claude Code** (Desktop Code tab or `claude` CLI) conversation in real time via CLI (`wye join`) or browser (`http(s)://.../<room>#<key>`). Sessions are end-to-end encrypted (`AES-GCM` with the `#<key>` URL fragment never sent to the relay). Both participants submit plain user prompts into the live session, and the host stays directly inside their open Desktop or CLI window.
 
-CLI entrypoint: [wye.js](./bin/wye.js)
-
 ## Starting a Share (Host)
 
 1. Launch `wye host` in the background (Antigravity: `IsDaemon: true`, `WaitMsBeforeAsync: 1500`; Claude Code: `run_in_background: true`). By default it connects to `wss://wye.jessetane.com` and auto-detects whether it is running inside Antigravity or Claude Code (only start a local `wye relay` first if the user explicitly asks for `--relay ws://127.0.0.1:8787`):
