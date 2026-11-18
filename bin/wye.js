@@ -12,20 +12,34 @@ const USAGE = `Usage:
   wye status
   wye stop   [<room-or-conversation-id>]`
 
-const { values, positionals } = parseArgs({
-	allowPositionals: true,
-	options: {
-		port: { type: 'string', short: 'p' },
-		bind: { type: 'string', short: 'b' },
-		relay: { type: 'string', short: 'r' },
-		harness: { type: 'string' },
-		session: { type: 'string', short: 's' },
-		room: { type: 'string' },
-		key: { type: 'string', short: 'k' },
-		name: { type: 'string', short: 'n' },
-		help: { type: 'boolean', short: 'h' }
-	}
-})
+let values
+let positionals
+try {
+	({ values, positionals } = parseArgs({
+		allowPositionals: true,
+		options: {
+			port: { type: 'string', short: 'p' },
+			bind: { type: 'string', short: 'b' },
+			relay: { type: 'string', short: 'r' },
+			harness: { type: 'string' },
+			session: { type: 'string', short: 's' },
+			room: { type: 'string' },
+			key: { type: 'string', short: 'k' },
+			name: { type: 'string', short: 'n' },
+			version: { type: 'boolean', short: 'v' },
+			help: { type: 'boolean', short: 'h' }
+		}
+	}))
+} catch (err) {
+	console.error(`${err.message}\n\n${USAGE}`)
+	process.exit(1)
+}
+
+if (values.version) {
+	const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+	console.log(pkg.version)
+	process.exit(0)
+}
 
 const cmd = positionals[0]
 if (values.help || !cmd) {

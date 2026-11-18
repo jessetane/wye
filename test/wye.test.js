@@ -594,6 +594,13 @@ test('resolveHarness reports actionable errors for missing session environments'
 	assert.equal(cliRes.status, 1)
 	assert.match(cliRes.stderr, /Could not detect an active Antigravity or Claude Code session/)
 	assert.doesNotMatch(cliRes.stderr, /\n\s+at /)
+	const verRes = spawnSync(process.execPath, [path.resolve('bin/wye.js'), '--version'], { encoding: 'utf8' })
+	assert.equal(verRes.status, 0)
+	assert.match(verRes.stdout.trim(), /^\d+\.\d+\.\d+$/)
+	const badFlagRes = spawnSync(process.execPath, [path.resolve('bin/wye.js'), '--nope'], { encoding: 'utf8' })
+	assert.equal(badFlagRes.status, 1)
+	assert.match(badFlagRes.stderr, /Usage:/)
+	assert.doesNotMatch(badFlagRes.stderr, /\n\s+at /)
 	fs.rmSync(emptyDir, { recursive: true, force: true })
 })
 
