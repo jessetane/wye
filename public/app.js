@@ -24,7 +24,20 @@ let hasSession = false
 let maxStepIndex = -1
 
 function nearBottom () {
-	return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 64
+	const doc = document.scrollingElement
+	return doc.scrollHeight - doc.scrollTop - window.innerHeight < 64
+}
+
+function scrollToBottom () {
+	window.scrollTo(0, document.scrollingElement.scrollHeight)
+}
+
+function syncLogInsets () {
+	const stick = nearBottom()
+	const gap = parseFloat(getComputedStyle(logEl).paddingLeft)
+	logEl.style.paddingTop = `${statusEl.offsetHeight + gap}px`
+	logEl.style.paddingBottom = `${formEl.offsetHeight + gap}px`
+	if (stick) scrollToBottom()
 }
 
 function appendInlineMarkdown (parent, line) {
@@ -183,7 +196,7 @@ function renderActivity () {
 	activityEl.hidden = false
 	activityEl.className = activity.kind === 'error' ? 'error' : ''
 	activityEl.textContent = formatActivity(activity)
-	if (stick && wasHidden) logEl.scrollTop = logEl.scrollHeight
+	if (stick && wasHidden) scrollToBottom()
 	if (active) {
 		if (!activityTimer) activityTimer = setInterval(renderActivity, 1000)
 	} else if (activityTimer) {
@@ -284,7 +297,7 @@ function renderStep (step) {
 		node.className = 'error'
 		node.textContent = `✖ ${step.text}`
 	}
-	if (stick) logEl.scrollTop = logEl.scrollHeight
+	if (stick) scrollToBottom()
 }
 
 function toggleExpandAll () {
@@ -332,7 +345,7 @@ function connect () {
 							renderStep(step)
 						}
 						syncActivity(true)
-						logEl.scrollTop = logEl.scrollHeight
+						scrollToBottom()
 					} else if (msg.type === 'step' && typeof msg.box === 'string') {
 						const step = await decryptJson(cryptoKey, msg.box)
 						if (msg.truncate) truncateSteps(step.index)
@@ -438,5 +451,8 @@ async function boot () {
 	}
 }
 
+const barObserver = new ResizeObserver(syncLogInsets)
+barObserver.observe(statusEl)
+barObserver.observe(formEl)
 window.addEventListener('hashchange', () => location.reload())
 boot()
